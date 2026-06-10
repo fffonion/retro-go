@@ -1,0 +1,5 @@
+set(COMPONENT_SRCDIRS ".")
+set(COMPONENT_ADD_INCLUDEDIRS ".")
+set(COMPONENT_REQUIRES esp_driver_gpio esp_driver_i2c esp_driver_i2s esp_adc esp_timer esp_codec_dev)
+register_component()
+rg_setup_compile_options(-Os)

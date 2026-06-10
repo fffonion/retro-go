@@ -19,6 +19,10 @@ PROJECT_NAME = os.getenv("PROJECT_NAME", "Retro-Go")
 PROJECT_ICON = os.getenv("PROJECT_ICON", "assets/icon.raw")
 PROJECT_APPS = {
   # Project name  Type, SubType, Size
+  'screen-test':  [0, 16, 1048576],
+  'touch-test':   [0, 16, 1048576],
+  'input-test':   [0, 16, 1048576],
+  'audio-test':   [0, 16, 1048576],
   'launcher':     [0, 16, 1048576],
   'retro-core':   [0, 16, 1048576],
   'prboom-go':    [0, 16, 786432],
@@ -65,7 +69,7 @@ MKFW_PY = os.path.join("tools", "mkfw.py")
 def run(cmd, cwd=None, check=True):
     print(f"Running command: {' '.join(cmd)}")
     if os.name == 'nt' and cmd[0].endswith(".py"):
-        return subprocess.run(["python", *cmd], shell=True, cwd=cwd, check=check)
+        return subprocess.run([sys.executable, *cmd], shell=False, cwd=cwd, check=check)
     return subprocess.run(cmd, shell=False, cwd=cwd, check=check)
 
 

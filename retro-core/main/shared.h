@@ -4,7 +4,11 @@
 
 #include <rg_system.h>
 
+#ifdef RG_AUDIO_SAMPLE_RATE
+#define AUDIO_SAMPLE_RATE   (RG_AUDIO_SAMPLE_RATE)
+#else
 #define AUDIO_SAMPLE_RATE   (32000)
+#endif
 #define AUDIO_BUFFER_LENGTH (AUDIO_SAMPLE_RATE / 50 + 1)
 
 extern uint8_t shared_memory_block_64K[0x10000];

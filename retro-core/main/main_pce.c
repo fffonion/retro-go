@@ -121,8 +121,8 @@ void osd_input_read(uint8_t joypads[8])
     if (joystick & RG_KEY_RIGHT)  buttons |= JOY_RIGHT;
     if (joystick & RG_KEY_UP)     buttons |= JOY_UP;
     if (joystick & RG_KEY_DOWN)   buttons |= JOY_DOWN;
-    if (joystick & RG_KEY_A)      buttons |= JOY_A;
-    if (joystick & RG_KEY_B)      buttons |= JOY_B;
+    if (joystick & (RG_KEY_A | RG_KEY_X)) buttons |= JOY_A;
+    if (joystick & (RG_KEY_B | RG_KEY_Y)) buttons |= JOY_B;
     if (joystick & RG_KEY_START)  buttons |= JOY_RUN;
     if (joystick & RG_KEY_SELECT) buttons |= JOY_SELECT;
 

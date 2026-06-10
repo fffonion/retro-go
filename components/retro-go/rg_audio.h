@@ -50,6 +50,7 @@ void rg_audio_set_sink(const char *driver_name, int device);
 
 int rg_audio_get_volume(void);
 void rg_audio_set_volume(int percent);
+bool rg_audio_is_ready(void);
 bool rg_audio_get_mute(void);
 void rg_audio_set_mute(bool mute);
 int rg_audio_get_sample_rate(void);

@@ -6,6 +6,7 @@ rg_setup_compile_options(
     -Wno-unused-function
     -Wno-unused-variable
     -Wno-array-bounds
+    -Wno-error=unterminated-string-initialization
     -Wno-implicit-fallthrough
     -DRIGHTSHIFT_IS_SAR
     -DFAST_LSB_WORD_ACCESS

@@ -1,5 +1,6 @@
 #include "rg_system.h"
 #include "rg_input.h"
+#include "rg_audio.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -7,10 +8,15 @@
 
 #ifdef ESP_PLATFORM
 #include <driver/gpio.h>
+#if defined(RG_GAMEPAD_ADC_MAP) || RG_BATTERY_DRIVER == 1
 #include <driver/adc.h>
 // This is a lazy way to silence deprecation notices on some esp-idf versions...
 // This hardcoded value is the first thing to check if something stops working!
 #define ADC_ATTEN_DB_11 3
+#endif
+#if defined(RG_VOLUME_BUTTON_ADC_MAP)
+#include <esp_adc/adc_oneshot.h>
+#endif
 #else
 #include <SDL2/SDL.h>
 #endif
@@ -29,6 +35,10 @@ static rg_keymap_gpio_t keymap_gpio[] = RG_GAMEPAD_GPIO_MAP;
 #ifdef RG_GAMEPAD_I2C_MAP
 static rg_keymap_i2c_t keymap_i2c[] = RG_GAMEPAD_I2C_MAP;
 #endif
+#ifdef RG_GAMEPAD_TOUCH_MAP
+static rg_keymap_touch_t keymap_touch[] = RG_GAMEPAD_TOUCH_MAP;
+static uint8_t touch_address = 0;
+#endif
 #ifdef RG_GAMEPAD_KBD_MAP
 static rg_keymap_kbd_t keymap_kbd[] = RG_GAMEPAD_KBD_MAP;
 #endif
@@ -38,8 +48,12 @@ static rg_keymap_serial_t keymap_serial[] = RG_GAMEPAD_SERIAL_MAP;
 #ifdef RG_GAMEPAD_VIRT_MAP
 static rg_keymap_virt_t keymap_virt[] = RG_GAMEPAD_VIRT_MAP;
 #endif
+#ifdef RG_VOLUME_BUTTON_ADC_MAP
+static rg_volume_button_adc_t keymap_volume_adc[] = RG_VOLUME_BUTTON_ADC_MAP;
+static adc_oneshot_unit_handle_t volume_adc_unit = NULL;
+#endif
 static bool input_task_running = false;
-static uint32_t gamepad_state = -1; // _Atomic
+static volatile uint32_t gamepad_state = -1;
 static uint32_t gamepad_mapped = 0;
 static rg_battery_t battery_state = {0};
 
@@ -47,7 +61,7 @@ static rg_battery_t battery_state = {0};
     for (size_t i = 0; i < RG_COUNT(keymap); ++i) \
         gamepad_mapped |= keymap[i].key;          \
 
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) && (defined(RG_GAMEPAD_ADC_MAP) || RG_BATTERY_DRIVER == 1)
 static inline int adc_get_raw(adc_unit_t unit, adc_channel_t channel)
 {
     if (unit == ADC_UNIT_1)
@@ -63,6 +77,145 @@ static inline int adc_get_raw(adc_unit_t unit, adc_channel_t channel)
     }
     RG_LOGE("Invalid ADC unit %d", (int)unit);
     return -1;
+}
+#endif
+
+#if defined(RG_GAMEPAD_TOUCH_MAP)
+#ifndef RG_GAMEPAD_TOUCH_ADDR
+#define RG_GAMEPAD_TOUCH_ADDR 0x5D
+#endif
+#ifndef RG_GAMEPAD_TOUCH_ALT_ADDR
+#define RG_GAMEPAD_TOUCH_ALT_ADDR 0x14
+#endif
+#ifndef RG_GAMEPAD_TOUCH_MAX_POINTS
+#define RG_GAMEPAD_TOUCH_MAX_POINTS 5
+#endif
+#ifndef RG_GAMEPAD_TOUCH_SWAP_XY
+#define RG_GAMEPAD_TOUCH_SWAP_XY 0
+#endif
+#ifndef RG_GAMEPAD_TOUCH_INVERT_X
+#define RG_GAMEPAD_TOUCH_INVERT_X 0
+#endif
+#ifndef RG_GAMEPAD_TOUCH_INVERT_Y
+#define RG_GAMEPAD_TOUCH_INVERT_Y 0
+#endif
+#ifndef RG_GAMEPAD_TOUCH_HOLD_MS
+#define RG_GAMEPAD_TOUCH_HOLD_MS 0
+#endif
+
+#define GOODIX_REG_PRODUCT_ID 0x8140
+#define GOODIX_REG_STATUS     0x814E
+#define GOODIX_REG_POINTS     0x8150
+#define GOODIX_STATUS_READY   0x80
+
+static uint32_t touch_hold_state = 0;
+static int64_t touch_hold_until = 0;
+
+static bool touch_i2c_read(uint8_t addr, uint16_t reg, void *read_data, size_t read_len)
+{
+    const uint8_t reg_data[2] = {reg >> 8, reg & 0xFF};
+    return rg_i2c_write(addr, -1, reg_data, sizeof(reg_data)) && rg_i2c_read(addr, -1, read_data, read_len);
+}
+
+static bool touch_i2c_write_byte(uint8_t addr, uint16_t reg, uint8_t value)
+{
+    const uint8_t data[3] = {reg >> 8, reg & 0xFF, value};
+    return rg_i2c_write(addr, -1, data, sizeof(data));
+}
+
+static bool touch_probe(uint8_t addr)
+{
+    uint8_t product_id[4] = {0};
+    if (!touch_i2c_read(addr, GOODIX_REG_PRODUCT_ID, product_id, sizeof(product_id)))
+        return false;
+    touch_address = addr;
+    RG_LOGI("Goodix touch ready (addr:0x%02X, id:%c%c%c%c).", addr,
+        product_id[0] ? product_id[0] : '?', product_id[1] ? product_id[1] : '?',
+        product_id[2] ? product_id[2] : '?', product_id[3] ? product_id[3] : '?');
+    return true;
+}
+
+static void touch_transform_point(int *x, int *y)
+{
+#if defined(RG_GAMEPAD_TOUCH_ROTATE_CW) && RG_GAMEPAD_TOUCH_ROTATE_CW
+    int t = *x;
+    *x = *y;
+#ifndef RG_GAMEPAD_TOUCH_PHYS_WIDTH
+#define RG_GAMEPAD_TOUCH_PHYS_WIDTH RG_SCREEN_WIDTH
+#endif
+    *y = RG_GAMEPAD_TOUCH_PHYS_WIDTH - 1 - t;
+#elif defined(RG_GAMEPAD_TOUCH_ROTATE_CCW) && RG_GAMEPAD_TOUCH_ROTATE_CCW
+    int t = *x;
+#ifndef RG_GAMEPAD_TOUCH_PHYS_HEIGHT
+#define RG_GAMEPAD_TOUCH_PHYS_HEIGHT RG_SCREEN_HEIGHT
+#endif
+    *x = RG_GAMEPAD_TOUCH_PHYS_HEIGHT - 1 - *y;
+    *y = t;
+#endif
+#if RG_GAMEPAD_TOUCH_SWAP_XY
+    int t = *x;
+    *x = *y;
+    *y = t;
+#endif
+#if RG_GAMEPAD_TOUCH_INVERT_X
+    *x = RG_SCREEN_WIDTH - 1 - *x;
+#endif
+#if RG_GAMEPAD_TOUCH_INVERT_Y
+    *y = RG_SCREEN_HEIGHT - 1 - *y;
+#endif
+}
+
+static bool touch_read_gamepad(uint32_t *state)
+{
+    uint8_t status = 0;
+    uint32_t touch_state = 0;
+
+    if (!touch_address || !touch_i2c_read(touch_address, GOODIX_REG_STATUS, &status, 1))
+        return false;
+    if (!(status & GOODIX_STATUS_READY))
+        goto done;
+
+    uint8_t points = RG_MIN(status & 0x0F, RG_GAMEPAD_TOUCH_MAX_POINTS);
+    uint8_t point_data[RG_GAMEPAD_TOUCH_MAX_POINTS * 8] = {0};
+    if (points && touch_i2c_read(touch_address, GOODIX_REG_POINTS, point_data, points * 8))
+    {
+        for (uint8_t point = 0; point < points; ++point)
+        {
+            const uint8_t *data = &point_data[point * 8];
+            int x = data[0] | (data[1] << 8);
+            int y = data[2] | (data[3] << 8);
+            touch_transform_point(&x, &y);
+
+            for (size_t i = 0; i < RG_COUNT(keymap_touch); ++i)
+            {
+                const rg_keymap_touch_t *mapping = &keymap_touch[i];
+                if (x >= mapping->x_min && x <= mapping->x_max && y >= mapping->y_min && y <= mapping->y_max)
+                    touch_state |= mapping->key;
+            }
+        }
+    }
+    touch_i2c_write_byte(touch_address, GOODIX_REG_STATUS, 0);
+
+done:
+#if RG_GAMEPAD_TOUCH_HOLD_MS > 0
+    int64_t now = rg_system_timer();
+    if (touch_state)
+    {
+        touch_hold_state = touch_state;
+        touch_hold_until = now + RG_GAMEPAD_TOUCH_HOLD_MS * 1000;
+    }
+    else if (touch_hold_state && now < touch_hold_until)
+    {
+        touch_state = touch_hold_state;
+    }
+    else
+    {
+        touch_hold_state = 0;
+    }
+#endif
+    if (state)
+        *state = touch_state;
+    return true;
 }
 #endif
 
@@ -199,6 +352,12 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
     }
 #endif
 
+#if defined(RG_GAMEPAD_TOUCH_MAP)
+    uint32_t touch_state = 0;
+    if (touch_read_gamepad(&touch_state))
+        state |= touch_state;
+#endif
+
 #if defined(RG_GAMEPAD_VIRT_MAP)
     for (size_t i = 0; i < RG_COUNT(keymap_virt); ++i)
     {
@@ -211,6 +370,57 @@ bool rg_input_read_gamepad_raw(uint32_t *out)
         *out = state;
     return true;
 }
+
+#if defined(RG_VOLUME_BUTTON_ADC_MAP)
+#ifndef RG_VOLUME_BUTTON_ADC_REPEAT_MS
+#define RG_VOLUME_BUTTON_ADC_REPEAT_MS 180
+#endif
+static void volume_button_adc_update(void)
+{
+    static int64_t press_start;
+    static int active;
+    static bool fired;
+
+    int raw = 0;
+    if (!volume_adc_unit || adc_oneshot_read(volume_adc_unit, RG_VOLUME_BUTTON_ADC_CHANNEL, &raw) != ESP_OK)
+        return;
+
+    int current = -1;
+    for (size_t i = 0; i < RG_COUNT(keymap_volume_adc); ++i)
+    {
+        const rg_volume_button_adc_t *mapping = &keymap_volume_adc[i];
+        if (raw >= mapping->min_raw && raw < mapping->max_raw)
+        {
+            current = i;
+            break;
+        }
+    }
+
+    if (current < 0)
+    {
+        press_start = 0;
+        active = -1;
+        fired = false;
+        return;
+    }
+
+    int64_t now = rg_system_timer();
+    if (press_start == 0 || active != current)
+    {
+        press_start = now;
+        active = current;
+        fired = false;
+    }
+    if (fired || now - press_start < 60000)
+        return;
+
+    if (rg_audio_is_ready())
+    {
+        rg_audio_set_volume(rg_audio_get_volume() + keymap_volume_adc[active].delta);
+        fired = true;
+    }
+}
+#endif
 
 static void input_task(void *arg)
 {
@@ -243,6 +453,10 @@ static void input_task(void *arg)
             }
             gamepad_state = local_gamepad_state;
         }
+
+#if defined(RG_VOLUME_BUTTON_ADC_MAP)
+        volume_button_adc_update();
+#endif
 
         if (rg_system_timer() >= next_battery_update)
         {
@@ -285,6 +499,21 @@ void rg_input_init(void)
     UPDATE_GLOBAL_MAP(keymap_adc);
 #endif
 
+#if defined(RG_VOLUME_BUTTON_ADC_MAP)
+    RG_LOGI("Initializing ADC volume button driver...");
+    adc_oneshot_unit_init_cfg_t volume_adc_unit_cfg = {
+        .unit_id = RG_VOLUME_BUTTON_ADC_UNIT,
+    };
+    adc_oneshot_chan_cfg_t volume_adc_chan_cfg = {
+        .atten = RG_VOLUME_BUTTON_ADC_ATTEN,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    if (adc_oneshot_new_unit(&volume_adc_unit_cfg, &volume_adc_unit) == ESP_OK)
+        adc_oneshot_config_channel(volume_adc_unit, RG_VOLUME_BUTTON_ADC_CHANNEL, &volume_adc_chan_cfg);
+    else
+        RG_LOGE("ADC volume button unit init failed.");
+#endif
+
 #if defined(RG_GAMEPAD_GPIO_MAP)
     RG_LOGI("Initializing GPIO gamepad driver...");
     for (size_t i = 0; i < RG_COUNT(keymap_gpio); ++i)
@@ -317,6 +546,18 @@ void rg_input_init(void)
     rg_i2c_write_byte(T_DECK_KBD_ADDRESS, -1, T_DECK_KBD_MODE_RAW_CMD);
 #endif
     UPDATE_GLOBAL_MAP(keymap_i2c);
+#endif
+
+#if defined(RG_GAMEPAD_TOUCH_MAP)
+    RG_LOGI("Initializing touch gamepad driver...");
+    if (rg_i2c_init())
+    {
+        if (!touch_probe(RG_GAMEPAD_TOUCH_ADDR))
+            touch_probe(RG_GAMEPAD_TOUCH_ALT_ADDR);
+    }
+    if (!touch_address)
+        RG_LOGE("Goodix touch controller was not detected.");
+    UPDATE_GLOBAL_MAP(keymap_touch);
 #endif
 
 #if defined(RG_GAMEPAD_KBD_MAP)

@@ -330,7 +330,9 @@ static inline int apu_noise(void)
    apu.noise.output_vol = outvol;
 
 output:
-   return ((apu.noise.output_vol + apu.noise.output_vol + apu.noise.output_vol) >> 2);
+   // The original linear mixer makes the NES noise channel dominate short SFX
+   // on this output path. Keep it present, but closer to the pulse channels.
+   return ((apu.noise.output_vol + apu.noise.output_vol + apu.noise.output_vol) >> 3);
 }
 
 

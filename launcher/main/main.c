@@ -446,7 +446,11 @@ void app_main(void)
         .about = &about_handler,
     };
 
+    #ifdef RG_AUDIO_SAMPLE_RATE
+    app = rg_system_init(RG_AUDIO_SAMPLE_RATE, &handlers, NULL);
+    #else
     app = rg_system_init(32000, &handlers, NULL);
+    #endif
     app->configNs = "launcher";
     app->isLauncher = true;
 

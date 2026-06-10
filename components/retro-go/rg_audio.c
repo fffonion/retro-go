@@ -87,7 +87,11 @@ void rg_audio_init(int sampleRate)
         audio.sink = &sinks[1 % RG_COUNT(sinks)];
 
     audio.filter = (int)rg_settings_get_number(NS_GLOBAL, SETTING_FILTER, 0);
-    audio.volume = (int)rg_settings_get_number(NS_GLOBAL, SETTING_VOLUME, 50);
+    audio.volume = (int)rg_settings_get_number(NS_GLOBAL, SETTING_VOLUME, 40);
+#ifdef RG_TARGET_ESP32_S31_KORVO_1
+    if (audio.volume <= 0)
+        audio.volume = 40;
+#endif
     audio.sampleRate = sampleRate;
     audio.driver = audio.sink->driver;
 
@@ -187,6 +191,11 @@ void rg_audio_set_sink(const char *driver_name, int device)
 int rg_audio_get_volume(void)
 {
     return audio.volume;
+}
+
+bool rg_audio_is_ready(void)
+{
+    return audio.driver != NULL;
 }
 
 void rg_audio_set_volume(int percent)

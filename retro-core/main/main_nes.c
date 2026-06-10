@@ -281,8 +281,8 @@ void nes_main(void)
         if (joystick & RG_KEY_RIGHT)  buttons |= NES_PAD_RIGHT;
         if (joystick & RG_KEY_DOWN)   buttons |= NES_PAD_DOWN;
         if (joystick & RG_KEY_LEFT)   buttons |= NES_PAD_LEFT;
-        if (joystick & RG_KEY_A)      buttons |= NES_PAD_A;
-        if (joystick & RG_KEY_B)      buttons |= NES_PAD_B;
+        if (joystick & (RG_KEY_A | RG_KEY_X)) buttons |= NES_PAD_A;
+        if (joystick & (RG_KEY_B | RG_KEY_Y)) buttons |= NES_PAD_B;
 
         if (drawFrame)
         {

@@ -339,8 +339,8 @@ void gbc_main(void)
             if (joystick & RG_KEY_LEFT) pad |= GB_PAD_LEFT;
             if (joystick & RG_KEY_SELECT) pad |= GB_PAD_SELECT;
             if (joystick & RG_KEY_START) pad |= GB_PAD_START;
-            if (joystick & RG_KEY_A) pad |= GB_PAD_A;
-            if (joystick & RG_KEY_B) pad |= GB_PAD_B;
+            if (joystick & (RG_KEY_A | RG_KEY_X)) pad |= GB_PAD_A;
+            if (joystick & (RG_KEY_B | RG_KEY_Y)) pad |= GB_PAD_B;
             gnuboy_set_pad(pad); // That call is somewhat costly, that's why we try to avoid it
             joystick_old = joystick;
         }

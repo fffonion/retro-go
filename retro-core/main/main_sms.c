@@ -188,8 +188,8 @@ void sms_main(void)
         if (joystick & RG_KEY_DOWN)  input.pad[0] |= INPUT_DOWN;
         if (joystick & RG_KEY_LEFT)  input.pad[0] |= INPUT_LEFT;
         if (joystick & RG_KEY_RIGHT) input.pad[0] |= INPUT_RIGHT;
-        if (joystick & RG_KEY_A)     input.pad[0] |= INPUT_BUTTON2;
-        if (joystick & RG_KEY_B)     input.pad[0] |= INPUT_BUTTON1;
+        if (joystick & (RG_KEY_A | RG_KEY_X)) input.pad[0] |= INPUT_BUTTON2;
+        if (joystick & (RG_KEY_B | RG_KEY_Y)) input.pad[0] |= INPUT_BUTTON1;
 
         if (IS_SMS)
         {

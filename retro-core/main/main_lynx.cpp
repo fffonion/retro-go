@@ -249,8 +249,8 @@ extern "C" void lynx_main(void)
     	if (joystick & RG_KEY_DOWN)   buttons |= dpad_mapped_down;
     	if (joystick & RG_KEY_LEFT)   buttons |= dpad_mapped_left;
     	if (joystick & RG_KEY_RIGHT)  buttons |= dpad_mapped_right;
-    	if (joystick & RG_KEY_A)      buttons |= BUTTON_A;
-    	if (joystick & RG_KEY_B)      buttons |= BUTTON_B;
+    	if (joystick & (RG_KEY_A | RG_KEY_X)) buttons |= BUTTON_A;
+    	if (joystick & (RG_KEY_B | RG_KEY_Y)) buttons |= BUTTON_B;
     	if (joystick & RG_KEY_START)  buttons |= BUTTON_OPT2; // BUTTON_PAUSE
     	if (joystick & RG_KEY_SELECT) buttons |= BUTTON_OPT1;
 

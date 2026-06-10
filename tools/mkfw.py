@@ -9,6 +9,14 @@ def readfile(filepath):
         exit("\nERROR: Failed to read file '%s': %s\n" % (err.filename, err.strerror))
 
 
+def parse_size(value):
+    units = {"K": 1024, "M": 1024 * 1024}
+    text = str(value).strip().upper()
+    if text[-1:] in units:
+        return int(text[:-1], 0) * units[text[-1]]
+    return int(text, 0)
+
+
 def get_partitions(args, flash_offset = 0):
     print("\nPartitions:")
     partitions = []
@@ -16,7 +24,7 @@ def get_partitions(args, flash_offset = 0):
     while len(args) >= 5:
         partype = int(args.pop(0), 0)
         subtype = int(args.pop(0), 0)
-        size = int(args.pop(0), 0)
+        size = parse_size(args.pop(0))
         label = args.pop(0)
         filename = args.pop(0)
 
@@ -64,6 +72,7 @@ def create_image(chip_type, partitions, bootloader_file, name, version, target):
         "esp32":   (0x1000, 0x8000, 0x10000),
         "esp32s3": (0x0000, 0x8000, 0x10000),
         "esp32p4": (0x2000, 0x8000, 0x10000),
+        "esp32s31": (0x2000, 0x8000, 0x10000),
     }.get(chip_type)
     partitions = [
         (1, 0x02, "nvs", 0x9000, 0x4000, b""),
@@ -105,7 +114,7 @@ def create_image(chip_type, partitions, bootloader_file, name, version, target):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Retro-Go firmware tool")
-    parser.add_argument("--type", choices=["odroid", "esplay", "esp32", "esp32s3", "esp32p4"], default="odroid")
+    parser.add_argument("--type", choices=["odroid", "esplay", "esp32", "esp32s3", "esp32p4", "esp32s31"], default="odroid")
     parser.add_argument("--bootloader", default="none")
     parser.add_argument("--name", default="unknown")
     parser.add_argument("--icon", default="none")

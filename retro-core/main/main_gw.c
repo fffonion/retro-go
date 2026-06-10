@@ -100,8 +100,8 @@ unsigned int gw_get_buttons()
         if (joystick & RG_KEY_UP) hw_buttons |= GW_BUTTON_UP;
         if (joystick & RG_KEY_RIGHT) hw_buttons |= GW_BUTTON_RIGHT;
         if (joystick & RG_KEY_DOWN) hw_buttons |= GW_BUTTON_DOWN;
-        if (joystick & RG_KEY_A) hw_buttons |= GW_BUTTON_A;
-        if (joystick & RG_KEY_B) hw_buttons |= GW_BUTTON_B;
+        if (joystick & (RG_KEY_A | RG_KEY_X)) hw_buttons |= GW_BUTTON_A;
+        if (joystick & (RG_KEY_B | RG_KEY_Y)) hw_buttons |= GW_BUTTON_B;
         if (joystick & RG_KEY_SELECT) hw_buttons |= GW_BUTTON_TIME;
         if (joystick & RG_KEY_START) hw_buttons |= GW_BUTTON_GAME;
     }

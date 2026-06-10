@@ -121,20 +121,39 @@ void rg_storage_init(void)
     RG_LOGI("Looking for SD Card using SDMMC...");
 
     sdmmc_host_t host_config = SDMMC_HOST_DEFAULT();
+#ifdef RG_STORAGE_SDMMC_4BIT
+    host_config.flags = SDMMC_HOST_FLAG_4BIT;
+#else
     host_config.flags = SDMMC_HOST_FLAG_1BIT;
+#endif
     host_config.slot = RG_STORAGE_SDMMC_HOST;
     host_config.max_freq_khz = RG_STORAGE_SDMMC_SPEED;
     host_config.do_transaction = &sdcard_do_transaction;
 
     sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
+#ifdef RG_STORAGE_SDMMC_4BIT
+    slot_config.width = 4;
+#else
     slot_config.width = 1;
+#endif
 #if SOC_SDMMC_USE_GPIO_MATRIX
     slot_config.clk = RG_GPIO_SDSPI_CLK;
     slot_config.cmd = RG_GPIO_SDSPI_CMD;
     slot_config.d0 = RG_GPIO_SDSPI_D0;
+#ifdef RG_STORAGE_SDMMC_4BIT
+    slot_config.d1 = RG_GPIO_SDSPI_D1;
+    slot_config.d2 = RG_GPIO_SDSPI_D2;
+    slot_config.d3 = RG_GPIO_SDSPI_D3;
+#else
     // d1 and d3 normally not used in width=1 but sdmmc_host_init_slot saves them, so just in case
-    slot_config.d1 = slot_config.d3 = -1;
+    slot_config.d1 = slot_config.d2 = slot_config.d3 = GPIO_NUM_NC;
 #endif
+#endif
+
+    RG_LOGI("SDMMC config: slot=%d width=%d freq=%d clk=%d cmd=%d d0=%d d1=%d d2=%d d3=%d",
+        host_config.slot, slot_config.width, host_config.max_freq_khz,
+        slot_config.clk, slot_config.cmd, slot_config.d0, slot_config.d1,
+        slot_config.d2, slot_config.d3);
 
     esp_vfs_fat_mount_config_t mount_config = {
         .format_if_mount_failed = false,

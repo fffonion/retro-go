@@ -55,6 +55,22 @@ typedef struct
     int level;    // 0-1
 } rg_keymap_i2c_t;
 
+// #define RG_GAMEPAD_TOUCH_MAP {{}, ...} to use a touch controller as an on-screen gamepad
+typedef struct
+{
+    rg_key_t key;
+    int x_min, x_max;
+    int y_min, y_max;
+} rg_keymap_touch_t;
+
+// #define RG_VOLUME_BUTTON_ADC_MAP {{}, ...} to use an ADC resistor ladder for direct volume controls
+typedef struct
+{
+    int delta;        // Volume change in percent
+    int min_raw;      // ADC raw range, inclusive
+    int max_raw;      // ADC raw range, exclusive
+} rg_volume_button_adc_t;
+
 // #define RG_GAMEPAD_KBD_MAP {{}, ...} for Keyboard driver
 typedef struct
 {
