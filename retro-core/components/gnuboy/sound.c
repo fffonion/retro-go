@@ -211,7 +211,7 @@ void gb_sound_emulate(void)
 				if (S4.envol > 15) S4.envol = 15;
 			}
 
-			s += s << 1;
+			s += s;
 
 			if (R_NR51 & 8) r += s;
 			if (R_NR51 & 128) l += s;

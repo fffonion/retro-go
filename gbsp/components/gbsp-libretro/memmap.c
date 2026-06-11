@@ -25,7 +25,9 @@
 #ifdef MMAP_JIT_CACHE
 
 // JIT block requirements translated to allocation code.
-#if defined(MIPS_ARCH)
+#if defined(ESP_PLATFORM)
+  #define _VALIDATE_BLOCK_FN(ptr, size) true
+#elif defined(MIPS_ARCH)
   #define _MAP_ITERATIONS           1024   // Test -/+2GB in 4MB steps
   #define _MAP_STEP         (4*1024*1024)
   #define _VALIDATE_BLOCK_FN(ptr, size) \
@@ -66,7 +68,21 @@ bool validate_addr_section_mips(void *ptr, unsigned size, unsigned max_offset_mb
 	       (ref_addr & msk) == (end_addr & msk);
 }
 
-#ifdef WIN32
+#if defined(ESP_PLATFORM)
+
+	#include <esp_heap_caps.h>
+	#include <stdlib.h>
+
+	void *map_jit_block(unsigned size) {
+		return heap_caps_aligned_alloc(16, size, MALLOC_CAP_EXEC | MALLOC_CAP_32BIT | MALLOC_CAP_INTERNAL);
+	}
+
+	void unmap_jit_block(void *bufptr, unsigned size) {
+		(void)size;
+		free(bufptr);
+	}
+
+#elif defined(WIN32)
 
 	#include <windows.h>
 	#include <io.h>
@@ -129,4 +145,3 @@ bool validate_addr_section_mips(void *ptr, unsigned size, unsigned max_offset_mb
 #endif /* WIN32 */
 
 #endif /* MMAP_JIT_CACHE */
-

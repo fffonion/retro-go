@@ -324,6 +324,59 @@ static inline void lcd_draw_circle_ring_logical(int cx, int cy, int radius, int 
     }
 }
 
+static inline uint8_t lcd_label_glyph(char c, int row)
+{
+    switch (c)
+    {
+    case 'A': { static const uint8_t g[7] = {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}; return g[row]; }
+    case 'B': { static const uint8_t g[7] = {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}; return g[row]; }
+    case 'C': { static const uint8_t g[7] = {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}; return g[row]; }
+    case 'E': { static const uint8_t g[7] = {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}; return g[row]; }
+    case 'L': { static const uint8_t g[7] = {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}; return g[row]; }
+    case 'M': { static const uint8_t g[7] = {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}; return g[row]; }
+    case 'N': { static const uint8_t g[7] = {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11}; return g[row]; }
+    case 'R': { static const uint8_t g[7] = {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}; return g[row]; }
+    case 'S': { static const uint8_t g[7] = {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}; return g[row]; }
+    case 'T': { static const uint8_t g[7] = {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}; return g[row]; }
+    case 'U': { static const uint8_t g[7] = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}; return g[row]; }
+    case 'X': { static const uint8_t g[7] = {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}; return g[row]; }
+    case 'Y': { static const uint8_t g[7] = {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}; return g[row]; }
+    default: return 0;
+    }
+}
+
+static inline void lcd_draw_label_char_logical(int left, int top, char c, int scale, uint16_t color)
+{
+    for (int row = 0; row < 7; ++row)
+    {
+        uint8_t bits = lcd_label_glyph(c, row);
+        for (int col = 0; col < 5; ++col)
+        {
+            if (bits & (1 << (4 - col)))
+                lcd_fill_rect_logical(left + col * scale, top + row * scale, scale, scale, color);
+        }
+    }
+}
+
+static inline void lcd_draw_label_logical(int cx, int cy, const char *text, int scale, uint16_t color)
+{
+    int chars = 0;
+    for (const char *ptr = text; *ptr; ++ptr)
+        chars++;
+
+    const int char_width = 5 * scale;
+    const int gap = scale;
+    const int width = chars * char_width + (chars > 0 ? (chars - 1) * gap : 0);
+    int x = cx - width / 2;
+    const int y = cy - (7 * scale) / 2;
+
+    for (const char *ptr = text; *ptr; ++ptr)
+    {
+        lcd_draw_label_char_logical(x, y, *ptr, scale, color);
+        x += char_width + gap;
+    }
+}
+
 static inline void lcd_draw_gba_touch_overlay(void)
 {
 #if defined(RG_TOUCH_OVERLAY_GBA) && RG_TOUCH_OVERLAY_GBA
@@ -335,41 +388,53 @@ static inline void lcd_draw_gba_touch_overlay(void)
     const uint16_t control = 0x4208;
     const uint16_t control_dark = 0x2104;
     const uint16_t accent = 0x7BEF;
+    const uint16_t label = 0xFFFF;
+    const uint16_t a_color = 0xE8E4;
+    const uint16_t b_color = 0xFD20;
+    const uint16_t x_color = 0x04BF;
+    const uint16_t y_color = 0x4D8A;
 
     lcd_fill_rect_logical(0, RG_TOUCH_OVERLAY_TOP, RG_SCREEN_WIDTH, RG_SCREEN_HEIGHT - RG_TOUCH_OVERLAY_TOP, panel);
     lcd_fill_rect_logical(0, RG_TOUCH_OVERLAY_TOP, RG_SCREEN_WIDTH, 2, line);
 
-    lcd_fill_rect_logical(18, 415, 175, 48, control_dark);
-    lcd_fill_rect_logical(287, 415, 175, 48, control_dark);
-    lcd_fill_rect_logical(22, 419, 167, 40, control);
-    lcd_fill_rect_logical(291, 419, 167, 40, control);
+    lcd_fill_rect_logical(18, 330, 175, 48, control_dark);
+    lcd_fill_rect_logical(287, 330, 175, 48, control_dark);
+    lcd_fill_rect_logical(22, 334, 167, 40, control);
+    lcd_fill_rect_logical(291, 334, 167, 40, control);
+    lcd_draw_label_logical(105, 354, "L", 3, label);
+    lcd_draw_label_logical(375, 354, "R", 3, label);
 
-    lcd_fill_circle_logical(120, 635, 102, control_dark);
-    lcd_fill_rect_logical(80, 505, 80, 90, control);
-    lcd_fill_rect_logical(80, 675, 80, 95, control);
-    lcd_fill_rect_logical(15, 595, 80, 80, control);
-    lcd_fill_rect_logical(145, 595, 80, 80, control);
-    lcd_fill_rect_logical(98, 600, 44, 70, panel);
-    lcd_fill_rect_logical(104, 535, 32, 42, accent);
-    lcd_fill_rect_logical(104, 698, 32, 42, accent);
-    lcd_fill_rect_logical(38, 619, 42, 32, accent);
-    lcd_fill_rect_logical(160, 619, 42, 32, accent);
+    lcd_fill_rect_logical(76, 456, 88, 88, control);
+    lcd_fill_rect_logical(76, 620, 88, 88, control);
+    lcd_fill_rect_logical(24, 544, 88, 88, control);
+    lcd_fill_rect_logical(128, 544, 88, 88, control);
+    lcd_fill_rect_logical(104, 552, 32, 72, panel);
+    lcd_fill_rect_logical(84, 484, 72, 32, accent);
+    lcd_fill_rect_logical(84, 648, 72, 32, accent);
+    lcd_fill_rect_logical(52, 552, 32, 72, accent);
+    lcd_fill_rect_logical(156, 552, 32, 72, accent);
 
-    lcd_fill_circle_logical(335, 655, 51, control_dark);
-    lcd_fill_circle_logical(420, 615, 51, control_dark);
-    lcd_fill_circle_logical(335, 655, 43, control);
-    lcd_fill_circle_logical(420, 615, 43, control);
-    lcd_draw_circle_ring_logical(335, 655, 43, 5, accent);
-    lcd_draw_circle_ring_logical(420, 615, 43, 5, accent);
+    lcd_fill_circle_logical(330, 648, 50, control_dark);
+    lcd_fill_circle_logical(433, 612, 50, control_dark);
+    lcd_fill_circle_logical(330, 648, 42, b_color);
+    lcd_fill_circle_logical(433, 612, 42, a_color);
+    lcd_draw_label_logical(330, 648, "B", 4, label);
+    lcd_draw_label_logical(433, 612, "A", 4, label);
 
-    lcd_fill_circle_logical(326, 535, 37, control_dark);
-    lcd_fill_circle_logical(425, 520, 37, control_dark);
-    lcd_fill_circle_logical(326, 535, 31, control);
-    lcd_fill_circle_logical(425, 520, 31, control);
+    lcd_fill_circle_logical(330, 524, 45, control_dark);
+    lcd_fill_circle_logical(433, 481, 45, control_dark);
+    lcd_fill_circle_logical(330, 524, 37, y_color);
+    lcd_fill_circle_logical(433, 481, 37, x_color);
+    lcd_draw_label_logical(330, 524, "Y", 4, label);
+    lcd_draw_label_logical(433, 481, "X", 4, label);
 
-    lcd_fill_rect_logical(120, 725, 115, 54, control);
-    lcd_fill_rect_logical(245, 725, 115, 54, control);
-    lcd_fill_rect_logical(190, 425, 100, 30, accent);
+    lcd_fill_rect_logical(110, 724, 120, 54, control);
+    lcd_fill_rect_logical(250, 724, 120, 54, control);
+    lcd_draw_label_logical(170, 751, "SELECT", 2, label);
+    lcd_draw_label_logical(310, 751, "START", 2, label);
+
+    lcd_fill_rect_logical(190, 330, 100, 80, accent);
+    lcd_draw_label_logical(240, 370, "MENU", 2, label);
 #endif
 }
 

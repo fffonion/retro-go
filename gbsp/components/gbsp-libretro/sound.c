@@ -358,6 +358,7 @@ u32 gbc_sound_master_volume;
   for(i = 0; i < buffer_ticks; i++)                                           \
   {                                                                           \
     get_noise_sample_##noise_type();                                          \
+    current_sample = (current_sample * 3) >> 2;                               \
     gbc_sound_render_sample_##type();                                         \
                                                                               \
     sample_index += frequency_step;                                           \

@@ -405,7 +405,7 @@ static void dsp_voice_V3c( dsp_voice_t* const v )
 
    /* Noise */
    if ( dsp_m.t_non & v->vbit )
-      output = (int16_t) (dsp_m.noise * 2);
+      output = (int16_t) ((dsp_m.noise * 3) >> 1);
 
    /* Apply envelope */
    dsp_m.t_output = (output * v->env) >> 11 & ~1;

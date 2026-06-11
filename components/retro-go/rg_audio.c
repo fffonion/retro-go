@@ -56,6 +56,25 @@ static const char *SETTING_DEVICE = "AudioDevice";
 static const char *SETTING_VOLUME = "Volume";
 static const char *SETTING_FILTER = "AudioFilter";
 
+static int16_t soft_limit_sample(int32_t sample)
+{
+    const int32_t threshold = 22000;
+    const int32_t knee = 6000;
+    int32_t sign = sample < 0 ? -1 : 1;
+    int32_t level = sample * sign;
+
+    if (level <= threshold)
+        return sample;
+
+    int32_t over = level - threshold;
+    level = threshold + (over * knee) / (over + knee);
+
+    if (level > 32767)
+        level = 32767;
+
+    return (int16_t)(level * sign);
+}
+
 static const char *get_last_driver_error(void)
 {
     if (audio.driver && audio.driver->get_error)
@@ -138,6 +157,8 @@ void rg_audio_deinit(void)
 void rg_audio_submit(const rg_audio_frame_t *frames, size_t count)
 {
     const int64_t time_start = rg_system_timer();
+    rg_audio_frame_t limited[128];
+    size_t offset = 0;
 
     if (!audio.driver)
         return;
@@ -147,7 +168,19 @@ void rg_audio_submit(const rg_audio_frame_t *frames, size_t count)
 
     if (ACQUIRE_DEVICE(0))
     {
-        audio.driver->submit(frames, count);
+        while (offset < count)
+        {
+            size_t chunk = RG_MIN(count - offset, RG_COUNT(limited));
+
+            for (size_t i = 0; i < chunk; ++i)
+            {
+                limited[i].left = soft_limit_sample(frames[offset + i].left);
+                limited[i].right = soft_limit_sample(frames[offset + i].right);
+            }
+
+            audio.driver->submit(limited, chunk);
+            offset += chunk;
+        }
         RELEASE_DEVICE();
     }
 

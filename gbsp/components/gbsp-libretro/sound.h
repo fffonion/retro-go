@@ -20,10 +20,22 @@
 #ifndef SOUND_H
 #define SOUND_H
 
-#define BUFFER_SIZE        (1 << 11)
-#define BUFFER_SIZE_MASK   (BUFFER_SIZE - 1)
+#include <rg_system.h>
 
+#ifdef RG_GBA_AUDIO_SAMPLE_RATE
+#define GBA_SOUND_FREQUENCY   (RG_GBA_AUDIO_SAMPLE_RATE)
+#elif defined(RG_AUDIO_SAMPLE_RATE)
+#define GBA_SOUND_FREQUENCY   (RG_AUDIO_SAMPLE_RATE)
+#else
 #define GBA_SOUND_FREQUENCY   (32768)
+#endif
+
+#if GBA_SOUND_FREQUENCY > 32768
+#define BUFFER_SIZE        (1 << 12)
+#else
+#define BUFFER_SIZE        (1 << 11)
+#endif
+#define BUFFER_SIZE_MASK   (BUFFER_SIZE - 1)
 
 #ifdef OVERCLOCK_60FPS
   #define GBC_BASE_RATE ((float)(60 * 228 * (272+960)))

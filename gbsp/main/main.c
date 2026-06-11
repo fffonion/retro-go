@@ -1,6 +1,7 @@
 #include <rg_system.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../components/gbsp-libretro/common.h"
 #include "../components/gbsp-libretro/memmap.h"
@@ -91,6 +92,8 @@ int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned id)
     if (joystick & RG_KEY_SELECT) val |= (1 << RETRO_DEVICE_ID_JOYPAD_SELECT);
     if (joystick & RG_KEY_B) val |= (1 << RETRO_DEVICE_ID_JOYPAD_B);
     if (joystick & RG_KEY_A) val |= (1 << RETRO_DEVICE_ID_JOYPAD_A);
+    if (joystick & RG_KEY_L) val |= (1 << RETRO_DEVICE_ID_JOYPAD_L);
+    if (joystick & RG_KEY_R) val |= (1 << RETRO_DEVICE_ID_JOYPAD_R);
     return val;
 }
 
@@ -119,20 +122,17 @@ static void options_handler(rg_gui_option_t *dest)
 
 void app_main(void)
 {
-    app = rg_system_init(&(const rg_config_t){
-        .sampleRate = AUDIO_SAMPLE_RATE,
-        .frameRate = 60,
-        .storageRequired = true,
-        .romRequired = true,
-        .handlers = {
-            .loadState = &load_state_handler,
-            .saveState = &save_state_handler,
-            .reset = &reset_handler,
-            .screenshot = &screenshot_handler,
-            .event = &event_handler,
-            .options = &options_handler,
-        },
-    });
+    const rg_handlers_t handlers = {
+        .loadState = &load_state_handler,
+        .saveState = &save_state_handler,
+        .reset = &reset_handler,
+        .screenshot = &screenshot_handler,
+        .event = &event_handler,
+        .options = &options_handler,
+    };
+    app = rg_system_init(AUDIO_SAMPLE_RATE, &handlers, NULL);
+    rg_system_set_tick_rate(60);
+    app->frameskip = 0;
     // rg_system_set_overclock(2);
 
     sound_master_enable = rg_settings_get_number(NS_APP, SETTING_SOUND_EMULATION, true);
@@ -195,19 +195,29 @@ void app_main(void)
         execute_arm(execute_cycles);
         // RG_TIMER_LAP("execute_arm");
 
+        bool slow_frame = false;
         if (!skip_next_frame)
+        {
+            slow_frame = !rg_display_sync(false);
             rg_display_submit(currentUpdate, 0);
+        }
 
         size_t frames_count = sound_read_samples((s16 *)mixbuffer, AUDIO_BUFFER_LENGTH);
         // RG_TIMER_LAP("sound_read_samples");
 
-        rg_system_tick(rg_system_timer() - startTime);
+        const int elapsed = rg_system_timer() - startTime;
+        rg_system_tick(elapsed);
 
         rg_audio_submit(mixbuffer, frames_count);
         // RG_TIMER_LAP("rg_audio_submit");
 
         if (skip_next_frame == 0)
-            skip_next_frame = app->frameskip;
+        {
+            if (app->frameskip > 0)
+                skip_next_frame = app->frameskip;
+            else if (slow_frame || elapsed > app->frameTime)
+                skip_next_frame = 1;
+        }
         else if (skip_next_frame > 0)
             skip_next_frame--;
     }
