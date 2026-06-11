@@ -260,7 +260,7 @@ extern dma_transfer_type dma[DMA_CHAN_CNT];
 
 // If we're not using the dynamic recompiler we don't need to detect SMC (Self Modifying Code)
 // So we can save 288KB of memory by effectively disabling the SMC check.
-#ifdef HAVE_DYNAREC
+#if defined(HAVE_DYNAREC) && !defined(RISCV_ARCH)
 #define SMC_DETECTION 1
 #else /* RETRO_GO */
 #define SMC_DETECTION 0

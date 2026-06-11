@@ -22,6 +22,13 @@ extern "C" {
   #include "common.h"
 }
 
+#if defined(ESP_PLATFORM) && defined(CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY)
+#include "esp_attr.h"
+#define GPSP_EXT_BSS EXT_RAM_BSS_ATTR
+#else
+#define GPSP_EXT_BSS
+#endif
+
 u16* gba_screen_pixels = NULL;
 
 #define get_screen_pixels()   gba_screen_pixels
@@ -957,9 +964,9 @@ static const u8 obj_dim_table[3][4][2] = {
   { {8, 16}, {8, 32}, {16, 32}, {32, 64} }
 };
 
-static u8 obj_priority_list[5][160][128];
-static u8 obj_priority_count[5][160];
-static u8 obj_alpha_count[160];
+static GPSP_EXT_BSS u8 obj_priority_list[5][160][128];
+static GPSP_EXT_BSS u8 obj_priority_count[5][160];
+static GPSP_EXT_BSS u8 obj_alpha_count[160];
 
 typedef struct {
   s32 obj_x, obj_y;
@@ -2335,5 +2342,4 @@ void update_scanline(void)
     }
   }
 }
-
 

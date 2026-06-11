@@ -88,6 +88,114 @@ typedef struct
   u8 update_cycles;
 } block_data_type;
 
+#if defined(RISCV_ARCH)
+
+#include <string.h>
+
+u32 reg[64];
+u32 spsr[6];
+u32 reg_mode[7][7];
+
+u16 oam_ram[512];
+u16 palette_ram[512];
+u16 palette_ram_converted[512];
+#ifndef RETRO_GO
+u8 ewram[(1024 * 256) << SMC_DETECTION];
+u8 iwram[(1024 * 32) << SMC_DETECTION];
+u8 vram[1024 * 96];
+#endif
+u8 *memory_map_read[8 * 1024];
+u16 io_registers[512];
+int dynarec_enable = 1;
+
+void translate_icache_sync(void) {}
+
+u8 function_cc *block_lookup_address_arm(u32 pc) {
+  (void)pc;
+  return NULL;
+}
+
+u8 function_cc *block_lookup_address_thumb(u32 pc) {
+  (void)pc;
+  return NULL;
+}
+
+u8 function_cc *block_lookup_address_dual(u32 pc) {
+  (void)pc;
+  return (reg[REG_CPSR] & 0x20)
+      ? block_lookup_address_thumb(pc)
+      : block_lookup_address_arm(pc);
+}
+
+bool translate_block_arm(u32 pc, bool ram_region) {
+  (void)pc;
+  (void)ram_region;
+  return false;
+}
+
+bool translate_block_thumb(u32 pc, bool ram_region) {
+  (void)pc;
+  (void)ram_region;
+  return false;
+}
+
+void init_bios_hooks(void) {
+  bios_swi_entrypoint = NULL;
+}
+
+void flush_translation_cache_ram(void) {
+  last_ram_translation_ptr = ram_translation_cache;
+  ram_translation_ptr = ram_translation_cache;
+
+  memset(iwram, 0, 0x8000);
+  memset(&ewram[0x40000], 0, 0x40000);
+
+  iwram_code_min = ~0U;
+  iwram_code_max = 0U;
+  ewram_code_min = ~0U;
+  ewram_code_max = 0U;
+}
+
+void flush_translation_cache_rom(void) {
+  rom_cache_watermark = INITIAL_ROM_WATERMARK;
+  last_rom_translation_ptr = rom_translation_cache
+      ? &rom_translation_cache[rom_cache_watermark]
+      : NULL;
+  rom_translation_ptr = last_rom_translation_ptr;
+  memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+}
+
+void init_dynarec_caches(void) {
+  rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
+  ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
+  memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
+  memset(iwram, 0, 0x8000);
+  memset(&ewram[0x40000], 0, 0x40000);
+
+  ewram_code_min = 0;
+  ewram_code_max = 0x40000;
+  iwram_code_min = 0;
+  iwram_code_max = 0x8000;
+}
+
+void flush_dynarec_caches(void) {
+  flush_translation_cache_rom();
+  flush_translation_cache_ram();
+}
+
+void init_emitter(bool must_swap) {
+  (void)must_swap;
+  init_bios_hooks();
+}
+
+u32 execute_arm_translate(u32 cycles) {
+  clear_gamepak_stickybits();
+  execute_arm(cycles);
+  return 0;
+}
+
+#else
+
 typedef struct
 {
   u32 branch_target;
@@ -221,6 +329,8 @@ typedef struct
   #include "arm/arm_emit.h"
 #elif defined(ARM64_ARCH)
   #include "arm/arm64_emit.h"
+#elif defined(RISCV_ARCH)
+  #include "riscv/riscv_emit.h"
 #else
   #include "x86/x86_emit.h"
 #endif
@@ -245,6 +355,31 @@ typedef struct
   #include "3ds/3ds_utils.h"
   void platform_cache_sync(void *baseaddr, void *endptr) {
     ctr_flush_invalidate_cache();
+  }
+#elif defined(ESP_PLATFORM)
+  #include <esp_cache.h>
+
+  void platform_cache_sync(void *baseaddr, void *endptr) {
+    uintptr_t start = (uintptr_t)baseaddr;
+    uintptr_t end = (uintptr_t)endptr;
+    if (start >= end)
+      return;
+
+    size_t size = end - start;
+
+    esp_cache_msync(baseaddr, size,
+        ESP_CACHE_MSYNC_FLAG_DIR_C2M |
+        ESP_CACHE_MSYNC_FLAG_TYPE_DATA |
+        ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+
+    const uintptr_t line_mask = 63U;
+    uintptr_t aligned_start = start & ~line_mask;
+    uintptr_t aligned_end = (end + line_mask) & ~line_mask;
+    esp_cache_msync((void *)aligned_start, aligned_end - aligned_start,
+        ESP_CACHE_MSYNC_FLAG_DIR_M2C |
+        ESP_CACHE_MSYNC_FLAG_TYPE_INST);
+
+    __builtin___clear_cache(baseaddr, endptr);
   }
 #elif defined(ARM_ARCH) || defined(ARM64_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
@@ -3418,4 +3553,5 @@ void flush_dynarec_caches(void)
 }
 
 
+#endif /* RISCV_ARCH */
 #endif
