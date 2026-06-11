@@ -5,7 +5,7 @@ IDF_TARGET = "esp32s31"
 FW_FORMAT = "none"
 
 # Default app set for S31 Retro-Go bring-up.
-DEFAULT_APPS = "launcher retro-core"
+DEFAULT_APPS = "launcher retro-core gbsp"
 
 # S31 flash is large enough; keep target image partitions aligned with the
 # 3 MB per-app build partition used by rg_tool.py so packed images fit too.

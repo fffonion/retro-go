@@ -35,13 +35,24 @@
   translator now reaches the RISC-V macro surface; unsupported instruction
   families emit an abort call instead of silently generating wrong code.
 - `riscv_stub.S` contains the first ABI stub for `execute_arm_translate_internal`
-  and is kept out of the default build until native generated blocks are ready.
+  and is now compiled as part of the component. Native execution is enabled only
+  when the build environment defines `GBSP_RISCV_NATIVE_DYNAREC=1`.
 - Direct ARM/Thumb branch placeholders now use real RV32 patchable branch
   emission. ARM `B/BL`, Thumb `B/BL`, Thumb PC-relative load, Thumb literal
   pool load, Thumb SP-relative add, Thumb SP adjust, Thumb high-register
   `ADD/MOV`, Thumb conditional branches, Thumb `ADD/SUB/CMP/CMN`, Thumb
   logical `MOV/AND/EOR/ORR/TST/BIC/MVN`, Thumb `MULS/NEG`, and Thumb immediate
-  `LSL/LSR/ASR` have first-pass RV32 emission.
+  `LSL/LSR/ASR` have first-pass RV32 emission. Thumb single load/store
+  instructions now route through the existing C memory helpers, and ARM/Thumb
+  indirect branch entry points have a first-pass lookup/tail-jump path.
+- Thumb register-shift `LSL/LSR/ASR/ROR`, `ADC/SBC`, block memory
+  `PUSH/POP/LDM/STM`, and `SWI/HLE div` are covered by first-pass helper paths.
+- ARM instructions not yet inlined use a one-instruction interpreter helper,
+  which lets native builds link while the hot ARM emitters are ported
+  incrementally.
+- The RISC-V backend currently uses memory-backed GBA register accesses. This
+  avoids cross-block register cache hazards until a full ABI cache protocol is
+  added.
 - The ESP target uses executable internal memory for JIT cache allocation and
   the ESP cache maintenance path in `platform_cache_sync`.
 - Large GBA sprite priority scratch buffers are placed in external BSS on the
@@ -49,15 +60,12 @@
 
 ## Remaining backend work
 
-- Add generated-block ABI glue matching the gpSP expectation for
-  `execute_arm_translate` and wire `riscv_stub.S` into the native build path.
-- Replace the remaining abort placeholders for indirect branch, ARM/Thumb ALU,
-  memory, PSR, and block memory emitters.
-- Port Thumb ALU/branch/load-store emitters first; most commercial GBA titles
-  spend more time in Thumb than ARM.
-- Port ARM ALU, multiply, PSR, memory, and block memory emitters.
-- Enable the native translator only after the RISC-V macro set compiles without
-  the fallback bridge.
+- Replace helper fallback paths with direct RV32 emitters for speed, starting
+  with ARM ALU/load-store and Thumb register shifts/block memory.
+- Add a cross-block register cache ABI and re-enable host-register allocation
+  once entry/exit writeback rules are complete.
+- Run on hardware with `GBSP_RISCV_NATIVE_DYNAREC=1`, collect the first crash
+  PC if any, then tighten the helper paths into direct emitters.
 
 ## Notes
 

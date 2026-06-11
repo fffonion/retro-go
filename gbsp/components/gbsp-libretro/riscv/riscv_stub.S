@@ -1,9 +1,8 @@
 /*
  * gpSP RISC-V dynarec ABI stub.
  *
- * This file is intentionally not wired into the default ESP32-S31 build yet.
- * The C fallback remains active until RISCV_NATIVE_DYNAREC has a complete
- * emitter macro surface. Keep this file assembling while the backend grows.
+ * The default ESP32-S31 build still uses the C fallback. Native dynarec builds
+ * opt in with RISCV_NATIVE_DYNAREC and enter through this ABI glue.
  */
 
   .text
@@ -15,6 +14,8 @@
 
   .global execute_arm_translate_internal
   .type execute_arm_translate_internal, @function
+  .global riscv_return_to_main
+  .type riscv_return_to_main, @function
 
 /*
  * a0: cycle counter
@@ -58,6 +59,7 @@ riscv_fallback_interpreter:
   li a0, 0
 
 riscv_return_to_main:
+  mv a0, s1
   lw s6, 0(sp)
   lw s5, 4(sp)
   lw s4, 8(sp)

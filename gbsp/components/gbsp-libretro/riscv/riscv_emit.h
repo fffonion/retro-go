@@ -17,6 +17,121 @@ static void riscv_dynarec_unimplemented(void) {
   abort();
 }
 
+void riscv_return_to_main(void);
+
+static u32 riscv_thumb_adc_flags(u32 lhs, u32 rhs) {
+  u32 carry = reg[REG_C_FLAG] & 1U;
+  u32 rhs_carry = rhs + carry;
+  u32 rhs_overflow = rhs_carry < rhs;
+  u32 result = lhs + rhs_carry;
+  reg[REG_C_FLAG] = rhs_overflow | (result < lhs);
+  reg[REG_N_FLAG] = result >> 31;
+  reg[REG_Z_FLAG] = result == 0;
+  reg[REG_V_FLAG] = (~(lhs ^ rhs_carry) & (lhs ^ result)) >> 31;
+  return result;
+}
+
+static u32 riscv_thumb_sbc_flags(u32 lhs, u32 rhs) {
+  u32 borrow = (reg[REG_C_FLAG] & 1U) ^ 1U;
+  u32 rhs_borrow = rhs + borrow;
+  u32 rhs_overflow = rhs_borrow < rhs;
+  u32 result = lhs - rhs_borrow;
+  reg[REG_C_FLAG] = !(rhs_overflow | (lhs < rhs_borrow));
+  reg[REG_N_FLAG] = result >> 31;
+  reg[REG_Z_FLAG] = result == 0;
+  reg[REG_V_FLAG] = ((lhs ^ rhs_borrow) & (lhs ^ result)) >> 31;
+  return result;
+}
+
+static u32 riscv_thumb_lsl_reg_flags(u32 value, u32 amount) {
+  amount &= 0xffU;
+  if (amount == 0)
+    return value;
+  if (amount < 32) {
+    reg[REG_C_FLAG] = (value >> (32 - amount)) & 1U;
+    value <<= amount;
+  } else if (amount == 32) {
+    reg[REG_C_FLAG] = value & 1U;
+    value = 0;
+  } else {
+    reg[REG_C_FLAG] = 0;
+    value = 0;
+  }
+  reg[REG_N_FLAG] = value >> 31;
+  reg[REG_Z_FLAG] = value == 0;
+  return value;
+}
+
+static u32 riscv_thumb_lsr_reg_flags(u32 value, u32 amount) {
+  amount &= 0xffU;
+  if (amount == 0)
+    return value;
+  if (amount < 32) {
+    reg[REG_C_FLAG] = (value >> (amount - 1)) & 1U;
+    value >>= amount;
+  } else if (amount == 32) {
+    reg[REG_C_FLAG] = value >> 31;
+    value = 0;
+  } else {
+    reg[REG_C_FLAG] = 0;
+    value = 0;
+  }
+  reg[REG_N_FLAG] = value >> 31;
+  reg[REG_Z_FLAG] = value == 0;
+  return value;
+}
+
+static u32 riscv_thumb_asr_reg_flags(u32 value, u32 amount) {
+  amount &= 0xffU;
+  if (amount == 0)
+    return value;
+  if (amount < 32) {
+    reg[REG_C_FLAG] = (value >> (amount - 1)) & 1U;
+    value = (u32)((s32)value >> amount);
+  } else {
+    reg[REG_C_FLAG] = value >> 31;
+    value = (u32)((s32)value >> 31);
+  }
+  reg[REG_N_FLAG] = value >> 31;
+  reg[REG_Z_FLAG] = value == 0;
+  return value;
+}
+
+static u32 riscv_thumb_ror_reg_flags(u32 value, u32 amount) {
+  amount &= 0xffU;
+  if (amount == 0)
+    return value;
+  amount &= 31U;
+  if (amount)
+    value = (value >> amount) | (value << (32 - amount));
+  reg[REG_C_FLAG] = value >> 31;
+  reg[REG_N_FLAG] = value >> 31;
+  reg[REG_Z_FLAG] = value == 0;
+  return value;
+}
+
+static u8 *riscv_arm_interpret_step(u32 pc) {
+  reg[REG_PC] = pc & ~3U;
+  reg[REG_CPSR] &= ~0x20U;
+  execute_arm(1);
+  if (reg[REG_CPSR] & 0x20U)
+    return block_lookup_address_thumb(reg[REG_PC] & ~1U);
+  if ((reg[REG_PC] & ~3U) != ((pc + 4) & ~3U))
+    return block_lookup_address_arm(reg[REG_PC] & ~3U);
+  return NULL;
+}
+
+static u8 *riscv_thumb_interpret_step(u32 pc) {
+  reg[REG_PC] = pc & ~1U;
+  reg[REG_CPSR] |= 0x20U;
+  execute_arm(1);
+  if (!(reg[REG_CPSR] & 0x20U))
+    return block_lookup_address_arm(reg[REG_PC] & ~3U);
+  if ((reg[REG_PC] & ~1U) != ((pc + 2) & ~1U))
+    return block_lookup_address_thumb(reg[REG_PC] & ~1U);
+  return NULL;
+}
+
 #define riscv_emit_unimplemented()                                           \
   do {                                                                        \
     rv_call_ptr((const void *)riscv_dynarec_unimplemented);                   \
@@ -31,7 +146,7 @@ static void riscv_dynarec_unimplemented(void) {
 
 #define reg_base RV_S0
 #define reg_cycles RV_S1
-#define reg_flags RV_S2
+#define reg_flag_tmp RV_S2
 
 #define reg_x0 RV_S3
 #define reg_x1 RV_S4
@@ -75,10 +190,10 @@ static inline void rv_emit_branch_placeholder_at(u8 **tptr) {
 #define rv_emit_branch_placeholder() rv_emit_branch_placeholder_at(&translation_ptr)
 
 static const u32 arm_register_allocation[] = {
-  reg_x0, reg_x1, mem_reg, mem_reg,
-  mem_reg, mem_reg, reg_x2, mem_reg,
-  mem_reg, reg_x3, mem_reg, mem_reg,
-  reg_x4, mem_reg, reg_x5, reg_a0,
+  mem_reg, mem_reg, mem_reg, mem_reg,
+  mem_reg, mem_reg, mem_reg, mem_reg,
+  mem_reg, mem_reg, mem_reg, mem_reg,
+  mem_reg, mem_reg, mem_reg, mem_reg,
   mem_reg, mem_reg, mem_reg, mem_reg,
   mem_reg, mem_reg, mem_reg, mem_reg,
   mem_reg, mem_reg, mem_reg, mem_reg,
@@ -86,10 +201,10 @@ static const u32 arm_register_allocation[] = {
 };
 
 static const u32 thumb_register_allocation[] = {
-  reg_x0, reg_x1, reg_x2, reg_x3,
-  reg_x4, reg_x5, mem_reg, mem_reg,
   mem_reg, mem_reg, mem_reg, mem_reg,
-  mem_reg, mem_reg, mem_reg, reg_a0,
+  mem_reg, mem_reg, mem_reg, mem_reg,
+  mem_reg, mem_reg, mem_reg, mem_reg,
+  mem_reg, mem_reg, mem_reg, mem_reg,
   mem_reg, mem_reg, mem_reg, mem_reg,
   mem_reg, mem_reg, mem_reg, mem_reg,
   mem_reg, mem_reg, mem_reg, mem_reg,
@@ -228,6 +343,14 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
 
 #define generate_cycle_update()                                               \
   do {                                                                        \
+    if (cycle_count) {                                                        \
+      rv_addi_checked(reg_cycles, reg_cycles, -(s32)cycle_count);             \
+      u8 *skip_return = translation_ptr;                                      \
+      rv_blt(RV_X0, reg_cycles, 0);                                           \
+      rv_jump_ptr(riscv_return_to_main);                                      \
+      rv_patch_branch((u32 *)skip_return, translation_ptr);                   \
+      cycle_count = 0;                                                        \
+    }                                                                         \
   } while (0)
 
 #define generate_branch_patch_unconditional(dest, offset)                     \
@@ -277,6 +400,16 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
     generate_indirect_branch_no_cycle_update(type);                           \
   } while (0)
 
+#define riscv_emit_interpreter_step(helper, current_pc)                       \
+  do {                                                                        \
+    rv_li(reg_a0, (current_pc));                                              \
+    generate_function_call(helper);                                           \
+    u8 *skip_branch = translation_ptr;                                        \
+    rv_beq(reg_rv, RV_X0, 0);                                                 \
+    rv_jalr(RV_X0, reg_rv, 0);                                                \
+    rv_patch_branch((u32 *)skip_branch, translation_ptr);                     \
+  } while (0)
+
 #define riscv_update_nz_flags(ireg)                                           \
   do {                                                                        \
     rv_srli(RV_T1, (ireg), 31);                                               \
@@ -319,6 +452,267 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
 
 #define riscv_thumb_load_operand(op_type, ireg, value)                        \
   riscv_thumb_load_operand_##op_type((ireg), (value))
+
+#define riscv_arm_operand_supported_imm(opcode_value) 1
+#define riscv_arm_operand_supported_imm_flags(opcode_value) 1
+#define riscv_arm_operand_supported_reg(opcode_value)                         \
+  (((opcode_value) & 0x00000ff0U) == 0)
+#define riscv_arm_operand_supported_reg_flags(opcode_value)                   \
+  (((opcode_value) & 0x00000ff0U) == 0)
+
+static inline u32 riscv_arm_imm_operand(u32 imm, u32 imm_ror) {
+  imm &= 0xffU;
+  imm_ror &= 31U;
+  if (imm_ror == 0)
+    return imm;
+  return (imm >> imm_ror) | (imm << (32 - imm_ror));
+}
+
+#define riscv_arm_load_operand_imm(ireg)                                      \
+  rv_li((ireg), riscv_arm_imm_operand(imm, imm_ror))
+
+#define riscv_arm_load_operand_imm_flags(ireg)                                \
+  do {                                                                        \
+    u32 arm_operand_value = riscv_arm_imm_operand(imm, imm_ror);              \
+    rv_li((ireg), arm_operand_value);                                         \
+    if (imm_ror) {                                                            \
+      rv_li(RV_T1, arm_operand_value >> 31);                                  \
+      rv_store_u32_abs(RV_T1, &reg[REG_C_FLAG]);                              \
+    }                                                                         \
+  } while (0)
+
+#define riscv_arm_load_operand_reg(ireg)                                      \
+  arm_generate_load_reg_pc((ireg), rm, 8)
+
+#define riscv_arm_load_operand_reg_flags(ireg)                                \
+  arm_generate_load_reg_pc((ireg), rm, 8)
+
+#define riscv_arm_load_operand(type, ireg)                                    \
+  riscv_arm_load_operand_##type((ireg))
+
+#define riscv_arm_store_data_result(ireg, rd_value)                           \
+  do {                                                                        \
+    if ((rd_value) == REG_PC) {                                               \
+      riscv_emit_interpreter_step(riscv_arm_interpret_step, pc);              \
+    } else {                                                                  \
+      arm_generate_store_reg((ireg), (rd_value));                             \
+    }                                                                         \
+  } while (0)
+
+#define riscv_arm_data_proc_common(type, body)                                \
+  do {                                                                        \
+    arm_decode_data_proc_reg(opcode);                                         \
+    u32 imm = opcode & 0xffU;                                                 \
+    u32 imm_ror = ((opcode >> 8) & 0x0fU) * 2U;                               \
+    if (!riscv_arm_operand_supported_##type(opcode) || rd == REG_PC) {        \
+      riscv_emit_interpreter_step(riscv_arm_interpret_step, pc);              \
+    } else {                                                                  \
+      arm_generate_load_reg_pc(reg_a0, rn, 8);                                \
+      riscv_arm_load_operand(type, reg_a1);                                   \
+      body;                                                                   \
+    }                                                                         \
+  } while (0)
+
+#define riscv_arm_data_proc_logic_emit(type, rvop, do_flags)                  \
+  riscv_arm_data_proc_common(type, {                                          \
+    rvop(reg_a2, reg_a0, reg_a1);                                             \
+    if (do_flags)                                                             \
+      riscv_update_nz_flags(reg_a2);                                          \
+    riscv_arm_store_data_result(reg_a2, rd);                                  \
+  })
+
+#define riscv_arm_data_proc_add_emit(type, do_flags)                          \
+  riscv_arm_data_proc_common(type, {                                          \
+    rv_add(reg_a2, reg_a0, reg_a1);                                           \
+    if (do_flags)                                                             \
+      riscv_update_add_flags(reg_a2, reg_a0, reg_a1);                         \
+    riscv_arm_store_data_result(reg_a2, rd);                                  \
+  })
+
+#define riscv_arm_data_proc_sub_emit(type, do_flags)                          \
+  riscv_arm_data_proc_common(type, {                                          \
+    rv_sub(reg_a2, reg_a0, reg_a1);                                           \
+    if (do_flags)                                                             \
+      riscv_update_sub_flags(reg_a2, reg_a0, reg_a1);                         \
+    riscv_arm_store_data_result(reg_a2, rd);                                  \
+  })
+
+#define riscv_arm_data_proc_rsb_emit(type, do_flags)                          \
+  riscv_arm_data_proc_common(type, {                                          \
+    rv_sub(reg_a2, reg_a1, reg_a0);                                           \
+    if (do_flags)                                                             \
+      riscv_update_sub_flags(reg_a2, reg_a1, reg_a0);                         \
+    riscv_arm_store_data_result(reg_a2, rd);                                  \
+  })
+
+#define riscv_arm_data_proc_adc_emit(type, do_flags)                          \
+  riscv_arm_data_proc_common(type, {                                          \
+    rv_load_u32_abs(RV_T1, &reg[REG_C_FLAG]);                                 \
+    rv_add(reg_a2, reg_a0, reg_a1);                                           \
+    rv_add(reg_a2, reg_a2, RV_T1);                                            \
+    if (do_flags) {                                                           \
+      generate_function_call(riscv_thumb_adc_flags);                          \
+    } else {                                                                  \
+      riscv_arm_store_data_result(reg_a2, rd);                                \
+    }                                                                         \
+    if (do_flags)                                                             \
+      riscv_arm_store_data_result(reg_rv, rd);                                \
+  })
+
+#define riscv_arm_data_proc_sbc_emit(type, do_flags)                          \
+  riscv_arm_data_proc_common(type, {                                          \
+    rv_load_u32_abs(RV_T1, &reg[REG_C_FLAG]);                                 \
+    rv_xori(RV_T1, RV_T1, 1);                                                 \
+    rv_add(RV_T2, reg_a1, RV_T1);                                             \
+    rv_sub(reg_a2, reg_a0, RV_T2);                                            \
+    if (do_flags) {                                                           \
+      generate_function_call(riscv_thumb_sbc_flags);                          \
+    } else {                                                                  \
+      riscv_arm_store_data_result(reg_a2, rd);                                \
+    }                                                                         \
+    if (do_flags)                                                             \
+      riscv_arm_store_data_result(reg_rv, rd);                                \
+  })
+
+#define riscv_arm_data_proc_rsc_emit(type, do_flags)                          \
+  riscv_arm_data_proc_common(type, {                                          \
+    rv_load_u32_abs(RV_T1, &reg[REG_C_FLAG]);                                 \
+    rv_xori(RV_T1, RV_T1, 1);                                                 \
+    rv_add(RV_T2, reg_a0, RV_T1);                                             \
+    rv_sub(reg_a2, reg_a1, RV_T2);                                            \
+    if (do_flags) {                                                           \
+      rv_sub(RV_T3, reg_a1, RV_T2);                                           \
+      riscv_update_sub_flags(RV_T3, reg_a1, RV_T2);                           \
+    }                                                                         \
+    riscv_arm_store_data_result(reg_a2, rd);                                  \
+  })
+
+#define riscv_arm_data_proc_bic_emit(type, do_flags)                          \
+  riscv_arm_data_proc_common(type, {                                          \
+    generate_not(reg_a1);                                                     \
+    rv_and(reg_a2, reg_a0, reg_a1);                                           \
+    if (do_flags)                                                             \
+      riscv_update_nz_flags(reg_a2);                                          \
+    riscv_arm_store_data_result(reg_a2, rd);                                  \
+  })
+
+#define riscv_arm_data_proc_unary_common(type, body)                          \
+  do {                                                                        \
+    arm_decode_data_proc_imm(opcode);                                         \
+    u32 rm = opcode & 0x0fU;                                                  \
+    if (!riscv_arm_operand_supported_##type(opcode) || rd == REG_PC) {        \
+      riscv_emit_interpreter_step(riscv_arm_interpret_step, pc);              \
+    } else {                                                                  \
+      riscv_arm_load_operand(type, reg_a1);                                   \
+      body;                                                                   \
+    }                                                                         \
+  } while (0)
+
+#define riscv_arm_data_proc_unary_mov_emit(type, do_flags)                    \
+  riscv_arm_data_proc_unary_common(type, {                                    \
+    generate_mov(reg_a2, reg_a1);                                             \
+    if (do_flags)                                                             \
+      riscv_update_nz_flags(reg_a2);                                          \
+    riscv_arm_store_data_result(reg_a2, rd);                                  \
+  })
+
+#define riscv_arm_data_proc_unary_mvn_emit(type, do_flags)                    \
+  riscv_arm_data_proc_unary_common(type, {                                    \
+    generate_mov(reg_a2, reg_a1);                                             \
+    generate_not(reg_a2);                                                     \
+    if (do_flags)                                                             \
+      riscv_update_nz_flags(reg_a2);                                          \
+    riscv_arm_store_data_result(reg_a2, rd);                                  \
+  })
+
+#define riscv_arm_data_proc_test_common(type, body)                           \
+  do {                                                                        \
+    arm_decode_data_proc_reg(opcode);                                         \
+    u32 imm = opcode & 0xffU;                                                 \
+    u32 imm_ror = ((opcode >> 8) & 0x0fU) * 2U;                               \
+    if (!riscv_arm_operand_supported_##type(opcode)) {                        \
+      riscv_emit_interpreter_step(riscv_arm_interpret_step, pc);              \
+    } else {                                                                  \
+      arm_generate_load_reg_pc(reg_a0, rn, 8);                                \
+      riscv_arm_load_operand(type, reg_a1);                                   \
+      body;                                                                   \
+    }                                                                         \
+  } while (0)
+
+#define riscv_arm_access_supported_imm(opcode_value) 1
+#define riscv_arm_access_supported_reg(opcode_value)                          \
+  (((opcode_value) & 0x00000ff0U) == 0)
+#define riscv_arm_access_supported_half_imm(opcode_value) 0
+#define riscv_arm_access_supported_half_reg(opcode_value) 0
+
+#define arm_decode_data_trans_half_imm() arm_decode_half_trans_of()
+#define arm_decode_data_trans_half_reg() arm_decode_half_trans_r()
+
+#define riscv_arm_load_offset_imm() rv_li(reg_a1, offset)
+#define riscv_arm_load_offset_reg() arm_generate_load_reg_pc(reg_a1, rm, 8)
+#define riscv_arm_load_offset_half_imm() rv_li(reg_a1, 0)
+#define riscv_arm_load_offset_half_reg() rv_li(reg_a1, 0)
+
+#define riscv_arm_apply_direction_up(base_reg, off_reg, dest_reg)             \
+  rv_add((dest_reg), (base_reg), (off_reg))
+#define riscv_arm_apply_direction_down(base_reg, off_reg, dest_reg)           \
+  rv_sub((dest_reg), (base_reg), (off_reg))
+
+#define riscv_arm_address_post(direction)                                     \
+  do {                                                                        \
+    generate_mov(reg_a0, RV_T2);                                              \
+    riscv_arm_apply_direction_##direction(RV_T2, reg_a1, RV_T3);              \
+    arm_generate_store_reg(RV_T3, rn);                                        \
+  } while (0)
+#define riscv_arm_address_pre(direction)                                      \
+  riscv_arm_apply_direction_##direction(RV_T2, reg_a1, reg_a0)
+#define riscv_arm_address_pre_wb(direction)                                   \
+  do {                                                                        \
+    riscv_arm_apply_direction_##direction(RV_T2, reg_a1, reg_a0);             \
+    arm_generate_store_reg(reg_a0, rn);                                       \
+  } while (0)
+
+#define riscv_arm_memory_load_u32(rd_value)                                   \
+  do {                                                                        \
+    cycle_count += 2;                                                         \
+    generate_update_pc(pc);                                                   \
+    generate_function_call(execute_load_u32);                                 \
+    arm_generate_store_reg(reg_rv, (rd_value));                               \
+  } while (0)
+#define riscv_arm_memory_load_u8(rd_value)                                    \
+  do {                                                                        \
+    cycle_count += 2;                                                         \
+    generate_update_pc(pc);                                                   \
+    generate_function_call(execute_load_u8);                                  \
+    arm_generate_store_reg(reg_rv, (rd_value));                               \
+  } while (0)
+#define riscv_arm_memory_load_u16(rd_value)                                   \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+#define riscv_arm_memory_load_s8(rd_value)                                    \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+#define riscv_arm_memory_load_s16(rd_value)                                   \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+
+#define riscv_arm_memory_store_u32(rd_value)                                  \
+  do {                                                                        \
+    cycle_count++;                                                            \
+    arm_generate_load_reg_pc(reg_a1, (rd_value), 12);                         \
+    generate_update_pc(pc + 4);                                               \
+    generate_function_call(execute_store_u32);                                \
+  } while (0)
+#define riscv_arm_memory_store_u8(rd_value)                                   \
+  do {                                                                        \
+    cycle_count++;                                                            \
+    arm_generate_load_reg_pc(reg_a1, (rd_value), 12);                         \
+    generate_update_pc(pc + 4);                                               \
+    generate_function_call(execute_store_u8);                                 \
+  } while (0)
+#define riscv_arm_memory_store_u16(rd_value)                                  \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+#define riscv_arm_memory_store_s8(rd_value)                                   \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+#define riscv_arm_memory_store_s16(rd_value)                                  \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
 
 #define riscv_emit_branch_filler(funct3, rs1, rs2)                            \
   do {                                                                        \
@@ -462,16 +856,81 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
     generate_condition();                                                     \
   } while (0)
 #define arm_access_memory(access_type, direction, adjust_op, mem_type, off_type) \
-  riscv_emit_unimplemented()
-#define arm_multiply(add_op, flags) riscv_emit_unimplemented()
-#define arm_multiply_long(name, add_op, flags) riscv_emit_unimplemented()
-#define arm_data_proc(name, type, flags_op) riscv_emit_unimplemented()
-#define arm_data_proc_test(name, type) riscv_emit_unimplemented()
-#define arm_data_proc_unary(name, type, flags_op) riscv_emit_unimplemented()
-#define arm_psr(op_type, transfer_type, psr_reg) riscv_emit_unimplemented()
-#define arm_swap(type) riscv_emit_unimplemented()
+  do {                                                                        \
+    arm_decode_data_trans_##off_type();                                       \
+    if (!riscv_arm_access_supported_##off_type(opcode) || rd == REG_PC) {     \
+      riscv_emit_interpreter_step(riscv_arm_interpret_step, pc);              \
+    } else {                                                                  \
+      arm_generate_load_reg_pc(RV_T2, rn, 8);                                 \
+      riscv_arm_load_offset_##off_type();                                     \
+      riscv_arm_address_##adjust_op(direction);                               \
+      riscv_arm_memory_##access_type##_##mem_type(rd);                        \
+    }                                                                         \
+  } while (0)
+#define arm_multiply(add_op, flags)                                           \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+#define arm_multiply_long(name, add_op, flags)                                \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+#define arm_data_proc(name, type, flags_op)                                   \
+  riscv_arm_data_proc_##name(type)
+#define riscv_arm_data_proc_and(type) riscv_arm_data_proc_logic_emit(type, rv_and, 0)
+#define riscv_arm_data_proc_ands(type) riscv_arm_data_proc_logic_emit(type, rv_and, 1)
+#define riscv_arm_data_proc_eor(type) riscv_arm_data_proc_logic_emit(type, rv_xor, 0)
+#define riscv_arm_data_proc_eors(type) riscv_arm_data_proc_logic_emit(type, rv_xor, 1)
+#define riscv_arm_data_proc_sub(type) riscv_arm_data_proc_sub_emit(type, 0)
+#define riscv_arm_data_proc_subs(type) riscv_arm_data_proc_sub_emit(type, 1)
+#define riscv_arm_data_proc_rsb(type) riscv_arm_data_proc_rsb_emit(type, 0)
+#define riscv_arm_data_proc_rsbs(type) riscv_arm_data_proc_rsb_emit(type, 1)
+#define riscv_arm_data_proc_add(type) riscv_arm_data_proc_add_emit(type, 0)
+#define riscv_arm_data_proc_adds(type) riscv_arm_data_proc_add_emit(type, 1)
+#define riscv_arm_data_proc_adc(type) riscv_arm_data_proc_adc_emit(type, 0)
+#define riscv_arm_data_proc_adcs(type) riscv_arm_data_proc_adc_emit(type, 1)
+#define riscv_arm_data_proc_sbc(type) riscv_arm_data_proc_sbc_emit(type, 0)
+#define riscv_arm_data_proc_sbcs(type) riscv_arm_data_proc_sbc_emit(type, 1)
+#define riscv_arm_data_proc_rsc(type) riscv_arm_data_proc_rsc_emit(type, 0)
+#define riscv_arm_data_proc_rscs(type) riscv_arm_data_proc_rsc_emit(type, 1)
+#define riscv_arm_data_proc_orr(type) riscv_arm_data_proc_logic_emit(type, rv_or, 0)
+#define riscv_arm_data_proc_orrs(type) riscv_arm_data_proc_logic_emit(type, rv_or, 1)
+#define riscv_arm_data_proc_bic(type) riscv_arm_data_proc_bic_emit(type, 0)
+#define riscv_arm_data_proc_bics(type) riscv_arm_data_proc_bic_emit(type, 1)
+#define arm_data_proc_test(name, type)                                        \
+  riscv_arm_data_proc_test_##name(type)
+#define riscv_arm_data_proc_test_tst(type)                                    \
+  riscv_arm_data_proc_test_common(type, {                                     \
+    rv_and(reg_a2, reg_a0, reg_a1);                                           \
+    riscv_update_nz_flags(reg_a2);                                            \
+  })
+#define riscv_arm_data_proc_test_teq(type)                                    \
+  riscv_arm_data_proc_test_common(type, {                                     \
+    rv_xor(reg_a2, reg_a0, reg_a1);                                           \
+    riscv_update_nz_flags(reg_a2);                                            \
+  })
+#define riscv_arm_data_proc_test_cmp(type)                                    \
+  riscv_arm_data_proc_test_common(type, {                                     \
+    rv_sub(reg_a2, reg_a0, reg_a1);                                           \
+    riscv_update_sub_flags(reg_a2, reg_a0, reg_a1);                           \
+  })
+#define riscv_arm_data_proc_test_cmn(type)                                    \
+  riscv_arm_data_proc_test_common(type, {                                     \
+    rv_add(reg_a2, reg_a0, reg_a1);                                           \
+    riscv_update_add_flags(reg_a2, reg_a0, reg_a1);                           \
+  })
+#define arm_data_proc_unary(name, type, flags_op)                             \
+  riscv_arm_data_proc_unary_##name(type)
+#define riscv_arm_data_proc_unary_mov(type)                                   \
+  riscv_arm_data_proc_unary_mov_emit(type, 0)
+#define riscv_arm_data_proc_unary_movs(type)                                  \
+  riscv_arm_data_proc_unary_mov_emit(type, 1)
+#define riscv_arm_data_proc_unary_mvn(type)                                   \
+  riscv_arm_data_proc_unary_mvn_emit(type, 0)
+#define riscv_arm_data_proc_unary_mvns(type)                                  \
+  riscv_arm_data_proc_unary_mvn_emit(type, 1)
+#define arm_psr(op_type, transfer_type, psr_reg)                              \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+#define arm_swap(type)                                                        \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
 #define arm_block_memory(access_type, offset_type, writeback_type, s_bit)     \
-  riscv_emit_unimplemented()
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
 #define arm_b() generate_branch(arm)
 #define arm_bl()                                                              \
   do {                                                                        \
@@ -485,9 +944,12 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
     arm_generate_load_reg(reg_a0, rn);                                        \
     generate_indirect_branch_cycle_update(dual);                              \
   } while (0)
-#define arm_swi() riscv_emit_unimplemented()
-#define arm_hle_div(cpu_mode) riscv_emit_unimplemented()
-#define arm_hle_div_arm(cpu_mode) riscv_emit_unimplemented()
+#define arm_swi()                                                             \
+  riscv_emit_interpreter_step(riscv_arm_interpret_step, pc)
+#define arm_hle_div(cpu_mode)                                                 \
+  riscv_emit_interpreter_step(riscv_##cpu_mode##_interpret_step, pc)
+#define arm_hle_div_arm(cpu_mode)                                             \
+  riscv_emit_interpreter_step(riscv_##cpu_mode##_interpret_step, pc)
 
 #define thumb_data_proc(type, name, op_type, _rd, _rs, _rn)                  \
   riscv_thumb_data_proc_##name(type, op_type, _rd, _rs, _rn)
@@ -537,9 +999,21 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
     thumb_generate_store_reg(reg_a2, (_rd));                                  \
   } while (0)
 #define riscv_thumb_data_proc_adcs(type, op_type, _rd, _rs, _rn)             \
-  riscv_emit_unimplemented()
+  do {                                                                        \
+    thumb_decode_##type();                                                    \
+    thumb_generate_load_reg(reg_a0, (_rs));                                   \
+    riscv_thumb_load_operand(op_type, reg_a1, (_rn));                         \
+    generate_function_call(riscv_thumb_adc_flags);                            \
+    thumb_generate_store_reg(reg_rv, (_rd));                                  \
+  } while (0)
 #define riscv_thumb_data_proc_sbcs(type, op_type, _rd, _rs, _rn)             \
-  riscv_emit_unimplemented()
+  do {                                                                        \
+    thumb_decode_##type();                                                    \
+    thumb_generate_load_reg(reg_a0, (_rs));                                   \
+    riscv_thumb_load_operand(op_type, reg_a1, (_rn));                         \
+    generate_function_call(riscv_thumb_sbc_flags);                            \
+    thumb_generate_store_reg(reg_rv, (_rd));                                  \
+  } while (0)
 #define riscv_thumb_data_proc_muls(type, op_type, _rd, _rs, _rn)             \
   do {                                                                        \
     thumb_decode_##type();                                                    \
@@ -720,10 +1194,38 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
     riscv_update_nz_flags(reg_a2);                                            \
     thumb_generate_store_reg(reg_a2, rd);                                     \
   } while (0)
-#define riscv_thumb_shift_lsl_reg(decode_type) riscv_emit_unimplemented()
-#define riscv_thumb_shift_lsr_reg(decode_type) riscv_emit_unimplemented()
-#define riscv_thumb_shift_asr_reg(decode_type) riscv_emit_unimplemented()
-#define riscv_thumb_shift_ror_reg(decode_type) riscv_emit_unimplemented()
+#define riscv_thumb_shift_lsl_reg(decode_type)                                \
+  do {                                                                        \
+    thumb_decode_##decode_type();                                             \
+    thumb_generate_load_reg(reg_a0, rd);                                      \
+    thumb_generate_load_reg(reg_a1, rs);                                      \
+    generate_function_call(riscv_thumb_lsl_reg_flags);                        \
+    thumb_generate_store_reg(reg_rv, rd);                                     \
+  } while (0)
+#define riscv_thumb_shift_lsr_reg(decode_type)                                \
+  do {                                                                        \
+    thumb_decode_##decode_type();                                             \
+    thumb_generate_load_reg(reg_a0, rd);                                      \
+    thumb_generate_load_reg(reg_a1, rs);                                      \
+    generate_function_call(riscv_thumb_lsr_reg_flags);                        \
+    thumb_generate_store_reg(reg_rv, rd);                                     \
+  } while (0)
+#define riscv_thumb_shift_asr_reg(decode_type)                                \
+  do {                                                                        \
+    thumb_decode_##decode_type();                                             \
+    thumb_generate_load_reg(reg_a0, rd);                                      \
+    thumb_generate_load_reg(reg_a1, rs);                                      \
+    generate_function_call(riscv_thumb_asr_reg_flags);                        \
+    thumb_generate_store_reg(reg_rv, rd);                                     \
+  } while (0)
+#define riscv_thumb_shift_ror_reg(decode_type)                                \
+  do {                                                                        \
+    thumb_decode_##decode_type();                                             \
+    thumb_generate_load_reg(reg_a0, rd);                                      \
+    thumb_generate_load_reg(reg_a1, rs);                                      \
+    generate_function_call(riscv_thumb_ror_reg_flags);                        \
+    thumb_generate_store_reg(reg_rv, rd);                                     \
+  } while (0)
 #define thumb_load_pc_pool_const(reg_rd, value)                               \
   do {                                                                        \
     rv_li(reg_a0, (value));                                                   \
@@ -769,8 +1271,90 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
         offset_type, _rb, _ro);                                               \
     thumb_access_memory_##access_type(mem_type, _rd);                         \
   } while (0)
+#define thumb_block_address_preadjust_no()                                    \
+  do {                                                                        \
+  } while (0)
+#define thumb_block_address_preadjust_down()                                  \
+  rv_addi_checked(reg_a0, reg_a0, -(s32)(bit_count[reg_list] * 4))
+#define thumb_block_address_preadjust_push_lr()                               \
+  rv_addi_checked(reg_a0, reg_a0, -(s32)((bit_count[reg_list] + 1) * 4))
+#define thumb_block_address_postadjust_no(base_reg)                           \
+  thumb_generate_store_reg(reg_a0, (base_reg))
+#define thumb_block_address_postadjust_up(base_reg)                           \
+  do {                                                                        \
+    rv_addi_checked(reg_a1, reg_a0, (s32)(bit_count[reg_list] * 4));          \
+    thumb_generate_store_reg(reg_a1, (base_reg));                             \
+  } while (0)
+#define thumb_block_address_postadjust_down(base_reg)                         \
+  do {                                                                        \
+    rv_addi_checked(reg_a1, reg_a0, -(s32)(bit_count[reg_list] * 4));         \
+    thumb_generate_store_reg(reg_a1, (base_reg));                             \
+  } while (0)
+#define thumb_block_address_postadjust_pop_pc(base_reg)                       \
+  do {                                                                        \
+    rv_addi_checked(reg_a1, reg_a0,                                           \
+        (s32)((bit_count[reg_list] + 1) * 4));                                \
+    thumb_generate_store_reg(reg_a1, (base_reg));                             \
+  } while (0)
+#define thumb_block_address_postadjust_push_lr(base_reg)                      \
+  thumb_generate_store_reg(reg_a0, (base_reg))
+#define thumb_block_memory_load(i)                                            \
+  do {                                                                        \
+    rv_li(reg_a1, pc);                                                        \
+    generate_function_call(execute_load_u32);                                 \
+    thumb_generate_store_reg(reg_rv, (i));                                    \
+  } while (0)
+#define thumb_block_memory_store(i)                                           \
+  do {                                                                        \
+    thumb_generate_load_reg(reg_a1, (i));                                     \
+    generate_function_call(execute_store_aligned_u32);                        \
+  } while (0)
+#define thumb_block_memory_extra_no()                                         \
+  do {                                                                        \
+  } while (0)
+#define thumb_block_memory_extra_up()                                         \
+  do {                                                                        \
+  } while (0)
+#define thumb_block_memory_extra_down()                                       \
+  do {                                                                        \
+  } while (0)
+#define thumb_block_memory_extra_push_lr()                                    \
+  do {                                                                        \
+    rv_load_u32_abs(reg_a0, &reg[REG_SAVE3]);                                 \
+    rv_addi_checked(reg_a0, reg_a0, (s32)(bit_count[reg_list] * 4));          \
+    thumb_generate_load_reg(reg_a1, REG_LR);                                  \
+    generate_function_call(execute_store_aligned_u32);                        \
+  } while (0)
+#define thumb_block_memory_extra_pop_pc()                                     \
+  do {                                                                        \
+    rv_load_u32_abs(reg_a0, &reg[REG_SAVE3]);                                 \
+    rv_addi_checked(reg_a0, reg_a0, (s32)(bit_count[reg_list] * 4));          \
+    rv_li(reg_a1, pc + 4);                                                    \
+    generate_function_call(execute_load_u32);                                 \
+    rv_andi(reg_rv, reg_rv, -2);                                              \
+    thumb_generate_store_reg(reg_rv, REG_PC);                                 \
+    generate_indirect_branch_cycle_update(thumb);                             \
+  } while (0)
 #define thumb_block_memory(access_type, pre_op, post_op, base_reg)           \
-  riscv_emit_unimplemented()
+  do {                                                                        \
+    thumb_decode_rlist();                                                     \
+    u32 offset = 0;                                                           \
+    thumb_generate_load_reg(reg_a0, (base_reg));                              \
+    rv_andi(reg_a0, reg_a0, -4);                                              \
+    thumb_block_address_preadjust_##pre_op();                                 \
+    thumb_block_address_postadjust_##post_op(base_reg);                       \
+    rv_store_u32_abs(reg_a0, &reg[REG_SAVE3]);                                \
+    for (u32 i = 0; i < 8; i++) {                                             \
+      if ((reg_list >> i) & 0x01) {                                           \
+        cycle_count++;                                                        \
+        rv_load_u32_abs(reg_a0, &reg[REG_SAVE3]);                             \
+        rv_addi_checked(reg_a0, reg_a0, (s32)offset);                         \
+        thumb_block_memory_##access_type(i);                                  \
+        offset += 4;                                                          \
+      }                                                                       \
+    }                                                                         \
+    thumb_block_memory_extra_##post_op();                                     \
+  } while (0)
 #define thumb_conditional_branch(condition)                                   \
   do {                                                                        \
     generate_cycle_update();                                                  \
@@ -805,7 +1389,8 @@ static inline void rv_store_gba_reg_at(u8 **tptr, const u32 *alloc, u32 host,
     thumb_generate_store_reg(reg_a0, REG_PC);                                 \
     generate_indirect_branch_cycle_update(dual);                              \
   } while (0)
-#define thumb_swi() riscv_emit_unimplemented()
+#define thumb_swi()                                                           \
+  riscv_emit_interpreter_step(riscv_thumb_interpret_step, pc)
 
 void init_emitter(bool must_swap) {
   (void)must_swap;

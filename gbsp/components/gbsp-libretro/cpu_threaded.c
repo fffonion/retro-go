@@ -88,9 +88,7 @@ typedef struct
   u8 update_cycles;
 } block_data_type;
 
-#if defined(RISCV_ARCH) && !defined(RISCV_NATIVE_DYNAREC)
-
-#include <string.h>
+#if defined(RISCV_ARCH)
 
 u32 reg[64];
 u32 spsr[6];
@@ -107,6 +105,32 @@ u8 vram[1024 * 96];
 u8 *memory_map_read[8 * 1024];
 u16 io_registers[512];
 int dynarec_enable = 1;
+
+#if defined(RISCV_NATIVE_DYNAREC)
+u32 function_cc execute_load_u8(u32 address) { return read_memory8(address); }
+u32 function_cc execute_load_u16(u32 address) { return read_memory16(address); }
+u32 function_cc execute_load_u32(u32 address) { return read_memory32(address); }
+u32 function_cc execute_load_s8(u32 address) { return read_memory8s(address); }
+u32 function_cc execute_load_s16(u32 address) { return read_memory16s(address); }
+void function_cc execute_store_u8(u32 address, u32 source) {
+  write_memory8(address, (u8)source);
+}
+void function_cc execute_store_u16(u32 address, u32 source) {
+  write_memory16(address, (u16)source);
+}
+void function_cc execute_store_u32(u32 address, u32 source) {
+  write_memory32(address, source);
+}
+void function_cc execute_store_aligned_u32(u32 address, u32 source) {
+  write_memory32(address, source);
+}
+#endif
+
+#endif
+
+#if defined(RISCV_ARCH) && !defined(RISCV_NATIVE_DYNAREC)
+
+#include <string.h>
 
 void translate_icache_sync(void) {}
 
