@@ -43,11 +43,12 @@ enum {
   RV_T6 = 31
 };
 
-#define rv32_emit32(value)                                                    \
-  do {                                                                        \
-    *((u32 *)translation_ptr) = (u32)(value);                                 \
-    translation_ptr += 4;                                                     \
-  } while (0)
+static inline void rv32_emit32_at(u8 **tptr, u32 value) {
+  *((u32 *)*tptr) = value;
+  *tptr += 4;
+}
+
+#define rv32_emit32(value) rv32_emit32_at(&translation_ptr, (u32)(value))
 
 static inline u32 rv32_r(u32 funct7, u32 rs2, u32 rs1, u32 funct3, u32 rd,
     u32 opcode) {
@@ -142,9 +143,9 @@ static inline bool rv32_imm_fits_i(s32 imm) {
   return imm >= -2048 && imm <= 2047;
 }
 
-static inline void rv_li(u32 rd, uintptr_t value) {
+static inline void rv_li_at(u8 **tptr, u32 rd, uintptr_t value) {
   if (rv32_imm_fits_i((s32)value)) {
-    rv_addi(rd, RV_X0, (s32)value);
+    rv32_emit32_at(tptr, rv32_i((s32)value, RV_X0, 0, rd, 0x13));
     return;
   }
 
@@ -153,47 +154,56 @@ static inline void rv_li(u32 rd, uintptr_t value) {
   if (lower & 0x800)
     lower |= ~0xfff;
 
-  rv_lui(rd, upper);
+  rv32_emit32_at(tptr, rv32_u(upper, rd, 0x37));
   if (lower)
-    rv_addi(rd, rd, lower);
+    rv32_emit32_at(tptr, rv32_i(lower, rd, 0, rd, 0x13));
 }
 
-static inline void rv_load_ptr(u32 rd, const void *ptr) {
-  rv_li(rd, (uintptr_t)ptr);
+static inline void rv_load_ptr_at(u8 **tptr, u32 rd, const void *ptr) {
+  rv_li_at(tptr, rd, (uintptr_t)ptr);
 }
 
-static inline void rv_call_ptr(const void *target) {
-  rv_load_ptr(RV_T0, target);
-  rv_jalr(RV_RA, RV_T0, 0);
+static inline void rv_call_ptr_at(u8 **tptr, const void *target) {
+  rv_load_ptr_at(tptr, RV_T0, target);
+  rv32_emit32_at(tptr, rv32_i(0, RV_T0, 0, RV_RA, 0x67));
 }
 
-static inline void rv_jump_ptr(const void *target) {
-  rv_load_ptr(RV_T0, target);
-  rv_jalr(RV_X0, RV_T0, 0);
+static inline void rv_jump_ptr_at(u8 **tptr, const void *target) {
+  rv_load_ptr_at(tptr, RV_T0, target);
+  rv32_emit32_at(tptr, rv32_i(0, RV_T0, 0, RV_X0, 0x67));
 }
 
-static inline void rv_tailcall_ptr(const void *target) {
-  rv_jump_ptr(target);
+static inline void rv_tailcall_ptr_at(u8 **tptr, const void *target) {
+  rv_jump_ptr_at(tptr, target);
 }
 
-static inline void rv_load_u32_abs(u32 rd, const void *address) {
-  rv_load_ptr(RV_T0, address);
-  rv_lw(rd, RV_T0, 0);
+static inline void rv_load_u32_abs_at(u8 **tptr, u32 rd, const void *address) {
+  rv_load_ptr_at(tptr, RV_T0, address);
+  rv32_emit32_at(tptr, rv32_i(0, RV_T0, 2, rd, 0x03));
 }
 
-static inline void rv_store_u32_abs(u32 rs, void *address) {
-  rv_load_ptr(RV_T0, address);
-  rv_sw(rs, RV_T0, 0);
+static inline void rv_store_u32_abs_at(u8 **tptr, u32 rs, void *address) {
+  rv_load_ptr_at(tptr, RV_T0, address);
+  rv32_emit32_at(tptr, rv32_s(0, rs, RV_T0, 2, 0x23));
 }
 
-static inline void rv_addi_checked(u32 rd, u32 rs, s32 imm) {
+static inline void rv_addi_checked_at(u8 **tptr, u32 rd, u32 rs, s32 imm) {
   if (rv32_imm_fits_i(imm)) {
-    rv_addi(rd, rs, imm);
+    rv32_emit32_at(tptr, rv32_i(imm, rs, 0, rd, 0x13));
   } else {
-    rv_li(RV_T0, (uintptr_t)imm);
-    rv_add(rd, rs, RV_T0);
+    rv_li_at(tptr, RV_T0, (uintptr_t)imm);
+    rv32_emit32_at(tptr, rv32_r(0x00, RV_T0, rs, 0, rd, 0x33));
   }
 }
+
+#define rv_li(rd, value) rv_li_at(&translation_ptr, (rd), (uintptr_t)(value))
+#define rv_load_ptr(rd, ptr) rv_load_ptr_at(&translation_ptr, (rd), (ptr))
+#define rv_call_ptr(target) rv_call_ptr_at(&translation_ptr, (target))
+#define rv_jump_ptr(target) rv_jump_ptr_at(&translation_ptr, (target))
+#define rv_tailcall_ptr(target) rv_tailcall_ptr_at(&translation_ptr, (target))
+#define rv_load_u32_abs(rd, address) rv_load_u32_abs_at(&translation_ptr, (rd), (address))
+#define rv_store_u32_abs(rs, address) rv_store_u32_abs_at(&translation_ptr, (rs), (address))
+#define rv_addi_checked(rd, rs, imm) rv_addi_checked_at(&translation_ptr, (rd), (rs), (imm))
 
 static inline void rv_patch_jal(u32 *insn, const void *target) {
   s32 imm = (s32)((const u8 *)target - (const u8 *)insn);

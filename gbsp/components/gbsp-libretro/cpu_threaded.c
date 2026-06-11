@@ -88,7 +88,7 @@ typedef struct
   u8 update_cycles;
 } block_data_type;
 
-#if defined(RISCV_ARCH)
+#if defined(RISCV_ARCH) && !defined(RISCV_NATIVE_DYNAREC)
 
 #include <string.h>
 
