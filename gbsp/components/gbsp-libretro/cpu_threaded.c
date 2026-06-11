@@ -32,6 +32,10 @@
 #include <kernel.h>
 #endif
 
+#if defined(MMAP_JIT_CACHE)
+#include "memmap.h"
+#endif
+
 u8 *last_rom_translation_ptr = NULL;
 u8 *last_ram_translation_ptr = NULL;
 
@@ -66,6 +70,30 @@ u32 ewram_code_max =  0U;
 u32 rom_cache_watermark = INITIAL_ROM_WATERMARK;
 
 u8 *bios_swi_entrypoint = NULL;
+
+#if defined(MMAP_JIT_CACHE)
+static bool ensure_dynarec_cache_storage(void)
+{
+  if (!rom_translation_cache)
+  {
+    rom_translation_cache =
+        map_jit_block(ROM_TRANSLATION_CACHE_SIZE + RAM_TRANSLATION_CACHE_SIZE);
+    if (!rom_translation_cache)
+    {
+      ram_translation_cache = NULL;
+      rom_translation_ptr = NULL;
+      ram_translation_ptr = NULL;
+      last_rom_translation_ptr = NULL;
+      last_ram_translation_ptr = NULL;
+      return false;
+    }
+
+    ram_translation_cache = &rom_translation_cache[ROM_TRANSLATION_CACHE_SIZE];
+  }
+
+  return ram_translation_cache != NULL;
+}
+#endif
 
 // Contains an offset table to rom_translation cache area
 // It features a chaining linked list for collisions
@@ -3504,6 +3532,11 @@ void init_bios_hooks(void)
 
 void flush_translation_cache_ram(void)
 {
+#if defined(MMAP_JIT_CACHE)
+  if (!ensure_dynarec_cache_storage())
+    return;
+#endif
+
   /* Flushes RAM caches avoiding doing too much work (ie. wiping unused memory) */
   flush_ram_count++;
   /*printf("ram flush %d (pc %x), %x to %x, %x to %x\n",
@@ -3542,6 +3575,11 @@ void flush_translation_cache_ram(void)
 
 void flush_translation_cache_rom(void)
 {
+#if defined(MMAP_JIT_CACHE)
+  if (!ensure_dynarec_cache_storage())
+    return;
+#endif
+
   /* We flush the generated code except for everything below the watermark. */
   last_rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
@@ -3551,6 +3589,11 @@ void flush_translation_cache_rom(void)
 
 void init_dynarec_caches(void)
 {
+#if defined(MMAP_JIT_CACHE)
+  if (!ensure_dynarec_cache_storage())
+    return;
+#endif
+
   /* Initialize caches so that we can start initalizing the emitter. */
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));

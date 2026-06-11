@@ -1394,6 +1394,10 @@ static inline u32 riscv_arm_imm_operand(u32 imm, u32 imm_ror) {
 
 void init_emitter(bool must_swap) {
   (void)must_swap;
+  if (!rom_translation_cache || !ram_translation_cache) {
+    bios_swi_entrypoint = NULL;
+    return;
+  }
   rom_cache_watermark = INITIAL_ROM_WATERMARK;
   init_bios_hooks();
 }

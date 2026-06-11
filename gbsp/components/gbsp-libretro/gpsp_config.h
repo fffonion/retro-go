@@ -12,7 +12,10 @@
 #endif
 
 /* Cache sizes and their config knobs */
-#if defined(SMALL_TRANSLATION_CACHE)
+#if defined(ESP_PLATFORM) && defined(RISCV_ARCH)
+  #define ROM_TRANSLATION_CACHE_SIZE (1024 * 256)
+  #define RAM_TRANSLATION_CACHE_SIZE (1024 * 64)
+#elif defined(SMALL_TRANSLATION_CACHE)
   #define ROM_TRANSLATION_CACHE_SIZE (1024 * 1024 * 2)
   #define RAM_TRANSLATION_CACHE_SIZE (1024 * 384)
 #else
@@ -25,7 +28,11 @@
 #define TRANSLATION_CACHE_LIMIT_THRESHOLD (1024 * 2)
 
 /* Hash table size for ROM trans cache lookups */
+#if defined(ESP_PLATFORM) && defined(RISCV_ARCH)
+#define ROM_BRANCH_HASH_BITS                           14
+#else
 #define ROM_BRANCH_HASH_BITS                           16
+#endif
 #define ROM_BRANCH_HASH_SIZE   (1 << ROM_BRANCH_HASH_BITS)
 
 /* RFU Multiplayer config, do not mess around too much with it */
